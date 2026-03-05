@@ -1,0 +1,224 @@
+// Foresight DSL — Example Scenario
+// Four qualifications, four training courses, four staff, three tasks
+
+qualification EASA_Part66_B1 {
+    category: licence
+    regulatory_body: "EASA"
+    validity: 60 months
+    recency: 24 months
+    renewal: training
+    prerequisites: []
+    min_experience: none
+    description: "Category B1 Aircraft Maintenance Licence"
+}
+
+qualification B737_TypeRating {
+    category: type_rating
+    regulatory_body: "EASA"
+    validity: 12 months
+    recency: 90 days
+    renewal: retest
+    prerequisites: [EASA_Part66_B1]
+    min_experience: none
+    description: "Boeing 737 Type Rating"
+}
+
+qualification CompanyAuth_B1 {
+    category: company_authorisation
+    issuing_body: "TechnicAir"
+    validity: 24 months
+    recency: 6 months
+    renewal: training
+    prerequisites: [EASA_Part66_B1]
+    min_experience: none
+    description: "Internal B1 certifying staff authorisation"
+}
+
+qualification SeniorEngineer {
+    category: company_authorisation
+    issuing_body: "TechnicAir"
+    validity: 36 months
+    recency: 12 months
+    renewal: training
+    prerequisites: [EASA_Part66_B1, CompanyAuth_B1]
+    min_experience: 5 years
+    description: "Senior engineer authorisation — requires 5 years experience"
+}
+
+training B737_Recurrent {
+    renews: B737_TypeRating
+    duration: 3 days
+    type: continuation
+    location: LHR
+    capacity: 8
+    cost: 4500
+}
+
+training B737_TypeRating_Renewal {
+    renews: B737_TypeRating
+    duration: 5 days
+    type: retest
+    location: LHR
+    capacity: 6
+    cost: 7200
+}
+
+training EASA_B1_Continuation {
+    renews: EASA_Part66_B1
+    duration: 5 days
+    type: continuation
+    location: LHR
+    capacity: 12
+    cost: 3200
+}
+
+training CompanyAuth_Renewal {
+    renews: CompanyAuth_B1
+    duration: 2 days
+    type: continuation
+    location: LHR
+    capacity: 10
+    cost: 1500
+}
+
+staff JohnSmith {
+    role: certifying
+    base: LHR
+    career_start: 2015-03-01
+    day_rate: 450
+
+    holds EASA_Part66_B1 {
+        issued: 2022-03-15
+    }
+
+    holds B737_TypeRating {
+        issued: 2023-07-01
+    }
+
+    holds CompanyAuth_B1 {
+        issued: 2023-01-10
+    }
+
+    training B737_Recurrent {
+        scheduled: 2025-08-15
+    }
+}
+
+staff SarahConnor {
+    role: certifying
+    base: LHR
+    career_start: 2012-06-15
+    day_rate: 520
+
+    holds EASA_Part66_B1 {
+        issued: 2020-11-20
+    }
+
+    holds B737_TypeRating {
+        issued: 2021-04-05
+    }
+
+    training B737_TypeRating_Renewal {
+        scheduled: 2025-03-01
+    }
+}
+
+staff MikeOkafor {
+    role: non_certifying
+    base: LGW
+    career_start: 2023-09-01
+    day_rate: 280
+
+    holds EASA_Part66_B1 {
+        issued: 2024-01-08
+    }
+}
+
+staff AliReza {
+    role: certifying
+    base: LHR
+    career_start: 2010-01-20
+    day_rate: 580
+
+    holds EASA_Part66_B1 {
+        issued: 2021-06-01
+    }
+
+    holds B737_TypeRating {
+        issued: 2024-11-15
+    }
+
+    holds CompanyAuth_B1 {
+        issued: 2024-03-01
+    }
+
+    holds SeniorEngineer {
+        issued: 2024-03-01
+    }
+}
+
+task B737_CCheck_LHR {
+    description: "Boeing 737-800 C-Check"
+    type: base_maintenance
+    aircraft: B737
+    location: LHR
+
+    window {
+        start: 2025-09-01
+        end: 2025-09-14
+    }
+
+    requires {
+        qualification: EASA_Part66_B1
+        qualification: B737_TypeRating
+        qualification: CompanyAuth_B1
+        role: certifying
+        min_staff: 2
+    }
+
+    prefer: least_flexible_first
+}
+
+task B737_LineCheck_LGW {
+    description: "Boeing 737 Weekly Check"
+    type: line_maintenance
+    aircraft: B737
+    location: LGW
+
+    window {
+        start: 2025-06-10
+        end: 2025-06-10
+    }
+
+    requires {
+        qualification: EASA_Part66_B1
+        qualification: B737_TypeRating
+        role: certifying
+        min_staff: 1
+    }
+
+    prefer: most_experience_first
+}
+
+task B737_EngineChange_LHR {
+    description: "Boeing 737 Engine Replacement"
+    type: base_maintenance
+    aircraft: B737
+    location: LHR
+
+    window {
+        start: 2025-10-01
+        end: 2025-10-07
+    }
+
+    requires {
+        qualification: EASA_Part66_B1
+        qualification: B737_TypeRating
+        qualification: CompanyAuth_B1
+        qualification: SeniorEngineer
+        role: certifying
+        min_staff: 2
+    }
+
+    prefer: lowest_cost_first
+}

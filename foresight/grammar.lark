@@ -1,0 +1,121 @@
+// Foresight DSL Grammar
+// Lark EBNF, parsed with Earley.
+//
+// Four block types: qualification, training, staff, task.
+// See design decisions DD1-DD21 in the report for the rationale
+// behind each field.
+
+start: block+
+
+block: qualification_block
+     | training_block
+     | staff_block
+     | task_block
+
+
+// --- Qualifications (DD1-DD4, DD19) ---
+
+qualification_block: "qualification" IDENTIFIER "{" qualification_field+ "}"
+
+qualification_field: "category" ":" category_value                      -> qual_category
+                   | "regulatory_body" ":" STRING                       -> qual_regulatory_body
+                   | "issuing_body" ":" STRING                          -> qual_issuing_body
+                   | "validity" ":" duration                            -> qual_validity
+                   | "recency" ":" duration                             -> qual_recency
+                   | "renewal" ":" renewal_value                        -> qual_renewal
+                   | "prerequisites" ":" prerequisite_list              -> qual_prerequisites
+                   | "min_experience" ":" experience_value              -> qual_min_experience
+                   | "description" ":" STRING                           -> qual_description
+
+category_value: CATEGORY_LIT
+renewal_value: RENEWAL_LIT
+experience_value: EXPERIENCE_NONE | duration
+
+CATEGORY_LIT: "licence" | "type_rating" | "company_authorisation"
+RENEWAL_LIT: "training" | "retest"
+EXPERIENCE_NONE: "none"
+
+prerequisite_list: "[" "]"                                              -> empty_prereqs
+                 | "[" IDENTIFIER ("," IDENTIFIER)* "]"                 -> prereq_ids
+
+
+// --- Training (DD8, DD20) ---
+
+training_block: "training" IDENTIFIER "{" training_field+ "}"
+
+training_field: "renews" ":" IDENTIFIER                                 -> train_renews
+              | "duration" ":" duration                                  -> train_duration
+              | "type" ":" training_type_value                           -> train_type
+              | "location" ":" IDENTIFIER                                -> train_location
+              | "capacity" ":" INT                                       -> train_capacity
+              | "cost" ":" NUMBER                                        -> train_cost
+
+training_type_value: TRAINING_TYPE_LIT
+TRAINING_TYPE_LIT: "continuation" | "retest"
+
+
+// --- Staff (DD5-DD7, DD9, DD19, DD21) ---
+// Staff blocks contain both scalar fields (role, base, etc.)
+// and nested sub-blocks for holds/training records.
+
+staff_block: "staff" IDENTIFIER "{" staff_field+ "}"
+
+staff_field: "role" ":" role_value                                      -> staff_role
+           | "base" ":" IDENTIFIER                                      -> staff_base
+           | "career_start" ":" DATE                                    -> staff_career_start
+           | "day_rate" ":" NUMBER                                      -> staff_day_rate
+           | holds_block                                                -> staff_holds
+           | staff_training_block                                       -> staff_training
+
+role_value: ROLE_LIT
+ROLE_LIT: "certifying" | "non_certifying"
+
+holds_block: "holds" IDENTIFIER "{" holds_field+ "}"
+holds_field: "issued" ":" DATE                                          -> holds_issued
+
+staff_training_block: "training" IDENTIFIER "{" staff_training_field+ "}"
+staff_training_field: "scheduled" ":" DATE                              -> training_scheduled
+
+
+// --- Tasks (DD10-DD16) ---
+
+task_block: "task" IDENTIFIER "{" task_field+ "}"
+
+task_field: "description" ":" STRING                                    -> task_description
+          | "type" ":" maintenance_type_value                           -> task_type
+          | "aircraft" ":" IDENTIFIER                                   -> task_aircraft
+          | "location" ":" IDENTIFIER                                   -> task_location
+          | window_block                                                -> task_window
+          | requires_block                                              -> task_requires
+          | "prefer" ":" preference_value                               -> task_prefer
+
+maintenance_type_value: MAINT_TYPE_LIT
+MAINT_TYPE_LIT: "base_maintenance" | "line_maintenance"
+
+window_block: "window" "{" window_field+ "}"
+window_field: "start" ":" DATE                                          -> window_start
+            | "end" ":" DATE                                            -> window_end
+
+requires_block: "requires" "{" requires_field+ "}"
+requires_field: "qualification" ":" IDENTIFIER                          -> req_qualification
+              | "role" ":" role_value                                    -> req_role
+              | "min_staff" ":" INT                                      -> req_min_staff
+
+preference_value: PREFER_LIT
+PREFER_LIT: "least_flexible_first" | "most_experience_first" | "latest_expiry_first" | "earliest_expiry_first" | "lowest_cost_first"
+
+
+// --- shared terminals ---
+
+duration: INT duration_unit
+duration_unit: DURATION_UNIT_LIT
+DURATION_UNIT_LIT: "days" | "months" | "years"
+
+DATE: /\d{4}-\d{2}-\d{2}/
+IDENTIFIER: /[A-Za-z_][A-Za-z0-9_]*/
+STRING: "\"" /[^"]*/ "\""
+INT: /\d+/
+NUMBER: /\d+(\.\d+)?/
+
+%ignore /\s+/
+%ignore /\/\/.*/

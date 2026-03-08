@@ -1,4 +1,4 @@
-"""foresight domain model — dataclasses for the parsed DSL."""
+"""foresight domain model. dataclasses for the parsed DSL."""
 
 from dataclasses import dataclass, field
 from datetime import date
@@ -37,6 +37,7 @@ class Training:
 class HoldsRecord:
     qualification: str
     issued: date | None
+    last_used: date | None = None
 
 @dataclass
 class ScheduledTraining:

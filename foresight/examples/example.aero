@@ -89,14 +89,17 @@ staff JohnSmith {
 
     holds EASA_Part66_B1 {
         issued: 2022-03-15
+        last_used: 2024-11-20
     }
 
     holds B737_TypeRating {
         issued: 2023-07-01
+        last_used: 2024-06-01
     }
 
     holds CompanyAuth_B1 {
         issued: 2023-01-10
+        last_used: 2023-06-15
     }
 
     training B737_Recurrent {
@@ -112,10 +115,12 @@ staff SarahConnor {
 
     holds EASA_Part66_B1 {
         issued: 2020-11-20
+        last_used: 2024-09-10
     }
 
     holds B737_TypeRating {
         issued: 2021-04-05
+        last_used: 2024-02-01
     }
 
     training B737_TypeRating_Renewal {
@@ -131,6 +136,7 @@ staff MikeOkafor {
 
     holds EASA_Part66_B1 {
         issued: 2024-01-08
+        last_used: 2024-10-01
     }
 }
 
@@ -142,18 +148,22 @@ staff AliReza {
 
     holds EASA_Part66_B1 {
         issued: 2021-06-01
+        last_used: 2025-01-15
     }
 
     holds B737_TypeRating {
         issued: 2024-11-15
+        last_used: 2025-04-01
     }
 
     holds CompanyAuth_B1 {
         issued: 2024-03-01
+        last_used: 2025-03-15
     }
 
     holds SeniorEngineer {
         issued: 2024-03-01
+        last_used: 2025-01-20
     }
 }
 

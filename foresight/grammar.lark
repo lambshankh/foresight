@@ -72,6 +72,7 @@ ROLE_LIT: "certifying" | "non_certifying"
 
 holds_block: "holds" IDENTIFIER "{" holds_field+ "}"
 holds_field: "issued" ":" DATE                                          -> holds_issued
+           | "last_used" ":" DATE                                       -> holds_last_used
 
 staff_training_block: "training" IDENTIFIER "{" staff_training_field+ "}"
 staff_training_field: "scheduled" ":" DATE                              -> training_scheduled

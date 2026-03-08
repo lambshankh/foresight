@@ -1,6 +1,6 @@
 """
 Parser for the Foresight DSL.
-Turns .foresight files into model objects using Lark.
+Turns .aero files into model objects using Lark.
 """
 
 from datetime import date
@@ -81,11 +81,16 @@ class ForesightTransformer(Transformer):
     def staff_base(self, i):         return ("base", i[0])
     def staff_career_start(self, i): return ("career_start", i[0])
     def staff_day_rate(self, i):     return ("day_rate", i[0])
-    def holds_issued(self, i):       return ("issued", i[0])
+    def holds_issued(self, i):     return ("issued", i[0])
+    def holds_last_used(self, i): return ("last_used", i[0])
 
     def holds_block(self, i):
-        issued = next((v for k, v in i[1:] if k == "issued"), None)
-        return HoldsRecord(qualification=i[0], issued=issued)
+        fields = dict(i[1:])
+        return HoldsRecord(
+            qualification=i[0],
+            issued=fields.get("issued"),
+            last_used=fields.get("last_used"),
+        )
 
     def staff_holds(self, i):        return ("holds", i[0])
     def training_scheduled(self, i): return ("scheduled", i[0])

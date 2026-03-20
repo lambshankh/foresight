@@ -1,7 +1,8 @@
 """Test the Foresight parser against the example DSL file."""
 
 from pathlib import Path
-from foresight.parser import parse_file
+import pytest
+from foresight.parser import parse_file, parse_foresight, ForesightError
 from foresight.models import (
     Qualification, Training, Staff, Task, Duration, ForesightModel,
 )
@@ -65,6 +66,124 @@ def test_task_window():
     for t in model.tasks.values():
         if t.window:
             assert t.window.start <= t.window.end
+
+
+# -- minimal valid DSL for test snippets --
+
+_MINIMAL_QUAL = """\
+qualification TestQual {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: []
+}
+"""
+
+# -- syntax error tests --
+
+def test_syntax_error_raises_foresight_error():
+    with pytest.raises(ForesightError) as exc_info:
+        parse_foresight("qualification Bad {{{")
+    assert exc_info.value.line is not None
+    assert "expected" in str(exc_info.value) or "unexpected" in str(exc_info.value)
+
+def test_syntax_error_includes_line_number():
+    bad = "qualification X {\n    category: licence\n    !!!\n}"
+    with pytest.raises(ForesightError) as exc_info:
+        parse_foresight(bad)
+    assert exc_info.value.line is not None
+
+
+# -- semantic validation tests --
+
+def test_holds_references_undefined_qualification():
+    dsl = _MINIMAL_QUAL + """
+staff Alice {
+    role: certifying
+    holds FakeQual {
+        issued: 2025-01-01
+    }
+}
+"""
+    with pytest.raises(ForesightError, match="holds qualification 'FakeQual'.*not defined"):
+        parse_foresight(dsl)
+
+def test_training_renews_undefined_qualification():
+    dsl = _MINIMAL_QUAL + """
+training SomeCourse {
+    renews: NoSuchQual
+    duration: 5 days
+}
+"""
+    with pytest.raises(ForesightError, match="renews qualification 'NoSuchQual'.*not defined"):
+        parse_foresight(dsl)
+
+def test_prerequisite_references_undefined_qualification():
+    dsl = """\
+qualification A {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: [NonExistent]
+}
+"""
+    with pytest.raises(ForesightError, match="prerequisite 'NonExistent'.*not defined"):
+        parse_foresight(dsl)
+
+def test_circular_prerequisites():
+    dsl = """\
+qualification A {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: [B]
+}
+qualification B {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: [A]
+}
+"""
+    with pytest.raises(ForesightError, match="circular prerequisite"):
+        parse_foresight(dsl)
+
+def test_task_requires_undefined_qualification():
+    dsl = _MINIMAL_QUAL + """
+task SomeTask {
+    type: base_maintenance
+    window {
+        start: 2025-06-01
+        end: 2025-06-15
+    }
+    requires {
+        qualification: GhostQual
+        min_staff: 1
+    }
+}
+"""
+    with pytest.raises(ForesightError, match="requires qualification 'GhostQual'.*not defined"):
+        parse_foresight(dsl)
+
+def test_scheduled_training_references_undefined_training():
+    dsl = _MINIMAL_QUAL + """
+staff Bob {
+    role: certifying
+    holds TestQual {
+        issued: 2025-01-01
+    }
+    training FakeCourse {
+        scheduled: 2025-07-01
+    }
+}
+"""
+    with pytest.raises(ForesightError, match="scheduled training 'FakeCourse'.*not defined"):
+        parse_foresight(dsl)
+
+def test_valid_file_passes_semantic_checks():
+    """The reference example.aero should pass all semantic checks."""
+    model = _load()
+    assert len(model.qualifications) > 0
 
 
 # -- standalone pretty-print --

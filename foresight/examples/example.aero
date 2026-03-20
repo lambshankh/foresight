@@ -1,4 +1,4 @@
-// Foresight DSL — Example Scenario
+// Foresight DSL: Example Scenario
 // Four qualifications, four training courses, four staff, three tasks
 
 qualification EASA_Part66_B1 {

@@ -6,10 +6,19 @@ Turns .aero files into model objects using Lark.
 from datetime import date
 from pathlib import Path
 from lark import Lark, Transformer
+from lark.exceptions import UnexpectedToken, UnexpectedCharacters
 from .models import (
     Duration, Qualification, Training, HoldsRecord, ScheduledTraining,
     Staff, TimeWindow, Requirements, Task, ForesightModel,
 )
+
+
+class ForesightError(Exception):
+    """Clean error for syntax or semantic problems in .aero files."""
+    def __init__(self, message, line=None, column=None):
+        self.line = line
+        self.column = column
+        super().__init__(message)
 
 
 class ForesightTransformer(Transformer):
@@ -164,9 +173,106 @@ _GRAMMAR = Path(__file__).parent / "grammar.lark"
 _parser = Lark(_GRAMMAR.read_text(), parser="earley", propagate_positions=True)
 _transformer = ForesightTransformer()
 
+def _validate_references(model: ForesightModel):
+    """Check cross-references between blocks. Raises ForesightError on problems."""
+    errors = []
+    qual_names = set(model.qualifications)
+    training_names = set(model.trainings)
+
+    # prerequisites → qualification
+    for q in model.qualifications.values():
+        for p in q.prerequisites:
+            if p not in qual_names:
+                errors.append(
+                    f"qualification '{q.name}': prerequisite '{p}' is not defined")
+
+    # circular prerequisites (DFS)
+    def _has_cycle(name, visiting):
+        if name in visiting:
+            cycle = " -> ".join(list(visiting) + [name])
+            errors.append(f"circular prerequisite chain: {cycle}")
+            return True
+        if name not in qual_names:
+            return False
+        visiting.add(name)
+        for p in model.qualifications[name].prerequisites:
+            if _has_cycle(p, visiting):
+                return True
+        visiting.discard(name)
+        return False
+
+    visited = set()
+    for name in qual_names:
+        if name not in visited:
+            _has_cycle(name, visited)
+
+    # training renews → qualification
+    for t in model.trainings.values():
+        if t.renews and t.renews not in qual_names:
+            errors.append(
+                f"training '{t.name}': renews qualification '{t.renews}' which is not defined")
+
+    # staff holds → qualification
+    for s in model.staff.values():
+        for h in s.holds:
+            if h.qualification not in qual_names:
+                errors.append(
+                    f"staff '{s.name}': holds qualification '{h.qualification}' which is not defined")
+
+    # staff scheduled training → training
+    for s in model.staff.values():
+        for st in s.trainings:
+            if st.training not in training_names:
+                errors.append(
+                    f"staff '{s.name}': scheduled training '{st.training}' is not defined")
+
+    # task requires → qualification
+    for t in model.tasks.values():
+        if t.requires:
+            for qn in t.requires.qualifications:
+                if qn not in qual_names:
+                    errors.append(
+                        f"task '{t.name}': requires qualification '{qn}' which is not defined")
+
+    if errors:
+        raise ForesightError("Semantic errors:\n  " + "\n  ".join(errors))
+
+
+def _format_lark_error(e):
+    """Turn a Lark parse exception into a clean one-line message."""
+    line = getattr(e, "line", None)
+    col = getattr(e, "column", None)
+    loc = f"line {line}" if line else "unknown location"
+    if col:
+        loc += f", column {col}"
+
+    if isinstance(e, UnexpectedToken):
+        expected = sorted(e.expected) if e.expected else []
+        exp_str = ", ".join(expected) if expected else "unknown"
+        found = repr(e.token) if e.token else "end of input"
+        msg = f"{loc}: expected {exp_str}, found {found}"
+    else:
+        found = repr(e.char) if hasattr(e, "char") else "unexpected character"
+        allowed = sorted(e.allowed) if hasattr(e, "allowed") and e.allowed else []
+        if allowed:
+            msg = f"{loc}: expected {', '.join(allowed)}, found {found}"
+        else:
+            msg = f"{loc}: unexpected {found}"
+
+    return msg, line, col
+
+
 def parse_foresight(text: str) -> ForesightModel:
-    """Parse DSL source text. Raises on syntax errors."""
-    return _transformer.transform(_parser.parse(text))
+    """Parse DSL source text. Raises ForesightError on syntax or semantic errors."""
+    try:
+        tree = _parser.parse(text)
+    except (UnexpectedToken, UnexpectedCharacters) as e:
+        msg, line, col = _format_lark_error(e)
+        raise ForesightError(msg, line=line, column=col) from e
+
+    model = _transformer.transform(tree)
+    _validate_references(model)
+    return model
 
 def parse_file(filepath: str) -> ForesightModel:
     return parse_foresight(Path(filepath).read_text())

@@ -39,10 +39,14 @@ class Violation:
 
 
 def _most_recent_renewal(qual_name, staff, model, before):
+    qual = model.qualifications.get(qual_name)
     best = None
     for entry in staff.trainings:
         training = model.trainings.get(entry.training)
         if training and training.renews == qual_name:
+            # DD25: renewal type matching
+            if qual and qual.renewal == "retest" and training.type != "retest":
+                continue
             if entry.scheduled and entry.scheduled <= before:
                 if best is None or entry.scheduled > best:
                     best = entry.scheduled
@@ -114,7 +118,16 @@ def _check_staff_for_task(staff, task, model):
                 ))
 
         last_used = _effective_last_used(qual_name, staff, model, window_start)
-        if qual.recency and last_used:
+        if qual.recency and last_used is None:
+            # DD22: no recency evidence
+            violations.append(Violation(
+                kind="no_recency_evidence",
+                task=task.name,
+                staff=staff.name,
+                qualification=qual_name,
+                detail=f"{staff.name}'s {qual_name} requires recency evidence but has no last_used date",
+            ))
+        elif qual.recency and last_used:
             recency_expiry = add_duration(last_used, qual.recency)
             if recency_expiry < window_start:
                 violations.append(Violation(
@@ -124,6 +137,55 @@ def _check_staff_for_task(staff, task, model):
                     qualification=qual_name,
                     detail=f"{staff.name}'s {qual_name} recency lapsed on {recency_expiry} (last used {last_used})",
                     on_date=recency_expiry,
+                ))
+            elif recency_expiry < window_end:
+                violations.append(Violation(
+                    kind="recency_lapses_during_task",
+                    task=task.name,
+                    staff=staff.name,
+                    qualification=qual_name,
+                    detail=f"{staff.name}'s {qual_name} recency lapses on {recency_expiry}, before the task ends on {window_end}",
+                    on_date=recency_expiry,
+                ))
+
+        # DD23: prerequisite enforcement
+        if qual is not None:
+            for prereq_name in qual.prerequisites:
+                prereq_qual = model.qualifications.get(prereq_name)
+                prereq_held = next((h for h in staff.holds if h.qualification == prereq_name), None)
+                if prereq_held is None:
+                    violations.append(Violation(
+                        kind="prerequisite_expired",
+                        task=task.name,
+                        staff=staff.name,
+                        qualification=qual_name,
+                        detail=f"{staff.name}'s {qual_name} depends on {prereq_name} which they do not hold",
+                    ))
+                elif prereq_qual and prereq_qual.validity:
+                    prereq_issued = _effective_issued(prereq_name, staff, model, window_start)
+                    if prereq_issued:
+                        prereq_expiry = add_duration(prereq_issued, prereq_qual.validity)
+                        if prereq_expiry < window_start:
+                            violations.append(Violation(
+                                kind="prerequisite_expired",
+                                task=task.name,
+                                staff=staff.name,
+                                qualification=qual_name,
+                                detail=f"{staff.name}'s {qual_name} depends on {prereq_name} which expired on {prereq_expiry}",
+                                on_date=prereq_expiry,
+                            ))
+
+        # DD24: minimum experience
+        if qual is not None and qual.min_experience and staff.career_start:
+            experience_met = add_duration(staff.career_start, qual.min_experience)
+            if experience_met > window_start:
+                violations.append(Violation(
+                    kind="insufficient_experience",
+                    task=task.name,
+                    staff=staff.name,
+                    qualification=qual_name,
+                    detail=f"{staff.name} won't meet {qual_name}'s {qual.min_experience.value} {qual.min_experience.unit} experience requirement until {experience_met}",
+                    on_date=experience_met,
                 ))
 
     return len(violations) == 0, violations

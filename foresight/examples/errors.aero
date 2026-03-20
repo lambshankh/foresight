@@ -1,0 +1,112 @@
+// Foresight DSL — Error Scenario
+// This file contains deliberate semantic errors for testing error reporting.
+// It should parse syntactically but fail semantic validation.
+
+qualification EASA_Part66_B1 {
+    category: licence
+    regulatory_body: "EASA"
+    validity: 60 months
+    recency: 24 months
+    renewal: training
+    prerequisites: []
+    description: "Category B1 Aircraft Maintenance Licence"
+}
+
+// ERROR: circular prerequisites — A320_TypeRating requires WidebodyAuth,
+// and WidebodyAuth requires A320_TypeRating
+qualification A320_TypeRating {
+    category: type_rating
+    regulatory_body: "EASA"
+    validity: 12 months
+    recency: 90 days
+    renewal: retest
+    prerequisites: [EASA_Part66_B1, WidebodyAuth]
+    description: "Airbus A320 Type Rating"
+}
+
+qualification WidebodyAuth {
+    category: company_authorisation
+    issuing_body: "TechnicAir"
+    validity: 24 months
+    recency: 6 months
+    renewal: training
+    prerequisites: [A320_TypeRating]
+    description: "Widebody authorisation — creates a circular dependency with A320_TypeRating"
+}
+
+// ERROR: prerequisite references undefined qualification
+qualification SeniorInspector {
+    category: company_authorisation
+    issuing_body: "TechnicAir"
+    validity: 36 months
+    recency: 12 months
+    renewal: training
+    prerequisites: [EASA_Part66_B1, QualThatDoesNotExist]
+    min_experience: 10 years
+    description: "References a qualification that was never declared"
+}
+
+// ERROR: renews a qualification that does not exist
+training PhantomCourse {
+    renews: A380_TypeRating
+    duration: 3 days
+    type: continuation
+    location: LHR
+    capacity: 10
+    cost: 5000
+}
+
+training A320_Recurrent {
+    renews: A320_TypeRating
+    duration: 3 days
+    type: continuation
+    location: LHR
+    capacity: 8
+    cost: 4500
+}
+
+staff JaneDoe {
+    role: certifying
+    base: LHR
+    career_start: 2018-05-01
+    day_rate: 400
+
+    holds EASA_Part66_B1 {
+        issued: 2022-01-15
+        last_used: 2024-11-01
+    }
+
+    // ERROR: holds a qualification that does not exist
+    holds B787_TypeRating {
+        issued: 2023-06-01
+        last_used: 2024-03-01
+    }
+
+    // ERROR: scheduled training references a training that does not exist
+    training NonExistentCourse {
+        scheduled: 2025-09-01
+    }
+}
+
+task A320_HeavyCheck {
+    description: "Airbus A320 Heavy Maintenance Visit"
+    type: base_maintenance
+    aircraft: A320
+    location: LHR
+
+    window {
+        start: 2025-08-01
+        end: 2025-08-21
+    }
+
+    requires {
+        qualification: EASA_Part66_B1
+        qualification: A320_TypeRating
+        // ERROR: requires a qualification that does not exist
+        qualification: AvionicsLevel3
+        role: certifying
+        min_staff: 2
+    }
+
+    prefer: least_flexible_first
+}

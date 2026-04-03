@@ -1,5 +1,3 @@
-"""Test the Foresight parser against the example DSL file."""
-
 from pathlib import Path
 import pytest
 from foresight.parser import parse_file, parse_foresight, ForesightError
@@ -13,8 +11,6 @@ _EXAMPLE = Path(__file__).parent.parent / "examples" / "example.aero"
 def _load():
     return parse_file(str(_EXAMPLE))
 
-
-# -- pytest tests --
 
 def test_parses_without_error():
     model = _load()
@@ -68,8 +64,6 @@ def test_task_window():
             assert t.window.start <= t.window.end
 
 
-# -- minimal valid DSL for test snippets --
-
 _MINIMAL_QUAL = """\
 qualification TestQual {
     category: licence
@@ -79,7 +73,6 @@ qualification TestQual {
 }
 """
 
-# -- syntax error tests --
 
 def test_syntax_error_raises_foresight_error():
     with pytest.raises(ForesightError) as exc_info:
@@ -93,8 +86,6 @@ def test_syntax_error_includes_line_number():
         parse_foresight(bad)
     assert exc_info.value.line is not None
 
-
-# -- semantic validation tests --
 
 def test_holds_references_undefined_qualification():
     dsl = _MINIMAL_QUAL + """
@@ -112,7 +103,6 @@ def test_training_renews_undefined_qualification():
     dsl = _MINIMAL_QUAL + """
 training SomeCourse {
     renews: NoSuchQual
-    duration: 5 days
 }
 """
     with pytest.raises(ForesightError, match="renews qualification 'NoSuchQual'.*not defined"):
@@ -181,12 +171,199 @@ staff Bob {
         parse_foresight(dsl)
 
 def test_valid_file_passes_semantic_checks():
-    """The reference example.aero should pass all semantic checks."""
     model = _load()
     assert len(model.qualifications) > 0
 
 
-# -- standalone pretty-print --
+def test_window_start_after_end_raises():
+    dsl = """\
+qualification Q {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: []
+}
+task BadWindow {
+    type: base_maintenance
+    window {
+        start: 2025-06-15
+        end: 2025-06-01
+    }
+}
+"""
+    with pytest.raises(ForesightError, match="window start.*after end"):
+        parse_foresight(dsl)
+
+
+_TWO_QUALS = """\
+qualification A1 {
+    category: licence
+    validity: 60 months
+    renewal: training
+    prerequisites: []
+}
+qualification B1 {
+    category: licence
+    validity: 60 months
+    renewal: training
+    prerequisites: []
+}
+"""
+
+_THREE_QUALS = _TWO_QUALS + """\
+qualification C1 {
+    category: licence
+    validity: 60 months
+    renewal: training
+    prerequisites: []
+}
+"""
+
+
+def test_subsumption_block_parses():
+    dsl = _TWO_QUALS + "subsumption {\n    B1 subsumes A1\n}\n"
+    model = parse_foresight(dsl)
+    assert "B1" in model.subsumptions
+    assert "A1" in model.subsumptions["B1"]
+
+
+def test_multiple_rules_in_one_block():
+    dsl = _THREE_QUALS + """\
+qualification A2 {
+    category: licence
+    validity: 60 months
+    renewal: training
+    prerequisites: []
+}
+qualification A3 {
+    category: licence
+    validity: 60 months
+    renewal: training
+    prerequisites: []
+}
+subsumption {
+    B1 subsumes A1
+    C1 subsumes A2
+    C1 subsumes A3
+}
+"""
+    model = parse_foresight(dsl)
+    assert model.subsumptions["B1"] == {"A1"}
+    assert model.subsumptions["C1"] == {"A2", "A3"}
+
+
+def test_multiple_subsumption_blocks_merge():
+    dsl = _THREE_QUALS + """\
+subsumption {
+    B1 subsumes A1
+}
+subsumption {
+    C1 subsumes B1
+}
+"""
+    model = parse_foresight(dsl)
+    assert "A1" in model.subsumptions.get("B1", set())
+    assert "B1" in model.subsumptions.get("C1", set())
+
+
+def test_no_subsumption_block_defaults_empty():
+    model = parse_foresight(_MINIMAL_QUAL)
+    assert model.subsumptions == {}
+
+
+def test_subsumption_undefined_subsuming_qual():
+    dsl = _TWO_QUALS + "subsumption {\n    GhostQual subsumes A1\n}\n"
+    with pytest.raises(ForesightError, match="'GhostQual'.*not a defined qualification"):
+        parse_foresight(dsl)
+
+
+def test_subsumption_undefined_subsumed_qual():
+    dsl = _TWO_QUALS + "subsumption {\n    B1 subsumes GhostTarget\n}\n"
+    with pytest.raises(ForesightError, match="'GhostTarget'.*not a defined qualification"):
+        parse_foresight(dsl)
+
+
+def test_circular_subsumption_two_nodes():
+    dsl = _TWO_QUALS + """\
+subsumption {
+    A1 subsumes B1
+    B1 subsumes A1
+}
+"""
+    with pytest.raises(ForesightError, match="circular subsumption chain"):
+        parse_foresight(dsl)
+
+
+def test_circular_subsumption_three_nodes():
+    dsl = _THREE_QUALS + """\
+subsumption {
+    A1 subsumes B1
+    B1 subsumes C1
+    C1 subsumes A1
+}
+"""
+    with pytest.raises(ForesightError, match="circular subsumption chain"):
+        parse_foresight(dsl)
+
+
+def test_self_subsumption():
+    dsl = _TWO_QUALS + "subsumption {\n    A1 subsumes A1\n}\n"
+    with pytest.raises(ForesightError, match="circular subsumption chain"):
+        parse_foresight(dsl)
+
+
+def test_example_still_parses():
+    model = _load()
+    assert "EASA_Part66_B1" in model.subsumptions
+    assert "EASA_Part66_A1" in model.subsumptions["EASA_Part66_B1"]
+
+
+from foresight.parser import _format_lark_error
+from lark.exceptions import UnexpectedToken, UnexpectedCharacters
+
+
+def test_format_lark_error_unexpected_token_branch():
+    class FakeUnexpectedToken(UnexpectedToken):
+        def __init__(self): pass
+
+    exc = FakeUnexpectedToken()
+    exc.line = 3
+    exc.column = 8
+    exc.expected = frozenset({"IDENT", "NUMBER"})
+    exc.token = "'keyword'"
+    msg, line, col = _format_lark_error(exc)
+    assert line == 3
+    assert col == 8
+    assert "expected" in msg
+
+
+def test_format_lark_error_unexpected_token_empty_expected():
+    class FakeUnexpectedToken(UnexpectedToken):
+        def __init__(self): pass
+
+    exc = FakeUnexpectedToken()
+    exc.line = 5
+    exc.column = 2
+    exc.expected = frozenset()
+    exc.token = None  # no token → "end of input"
+    msg, line, col = _format_lark_error(exc)
+    assert "end of input" in msg
+    assert "unknown" in msg
+
+
+def test_format_lark_error_unexpected_chars_empty_allowed():
+    class FakeUnexpectedChars(UnexpectedCharacters):
+        def __init__(self): pass
+
+    exc = FakeUnexpectedChars()
+    exc.line = 2
+    exc.column = 5
+    exc.char = "@"
+    exc.allowed = frozenset()  # empty → hits the "unexpected" branch
+    msg, line, col = _format_lark_error(exc)
+    assert "unexpected" in msg
+    assert line == 2
+
 
 def _print_model(model):
     print("=" * 60)
@@ -207,11 +384,7 @@ def _print_model(model):
     for name, t in model.trainings.items():
         print(f"  {name}")
         print(f"    renews:   {t.renews}")
-        print(f"    duration: {t.duration}")
         print(f"    type:     {t.type}")
-        print(f"    location: {t.location}")
-        print(f"    capacity: {t.capacity}")
-        print(f"    cost:     {t.cost}")
 
     print(f"\nStaff ({len(model.staff)}):")
     for name, s in model.staff.items():

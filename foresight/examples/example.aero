@@ -1,5 +1,16 @@
 // Foresight DSL: Example Scenario
-// Four qualifications, four training courses, four staff, three tasks
+// Five qualifications, four training courses, four staff, three tasks
+
+qualification EASA_Part66_A1 {
+    category: licence
+    regulatory_body: "EASA"
+    validity: 60 months
+    recency: 24 months
+    renewal: training
+    prerequisites: []
+    min_experience: none
+    description: "Category A1 Turbine Aircraft — subcategory of B1 (Part-66 Appendix I)"
+}
 
 qualification EASA_Part66_B1 {
     category: licence
@@ -45,40 +56,29 @@ qualification SeniorEngineer {
     description: "Senior engineer authorisation — requires 5 years experience"
 }
 
+subsumption {
+    // B1 holders satisfy A1-subcategory requirements (Part-66 Appendix I, Table 1)
+    EASA_Part66_B1 subsumes EASA_Part66_A1
+}
+
 training B737_Recurrent {
     renews: B737_TypeRating
-    duration: 3 days
     type: continuation
-    location: LHR
-    capacity: 8
-    cost: 4500
 }
 
 training B737_TypeRating_Renewal {
     renews: B737_TypeRating
-    duration: 5 days
     type: retest
-    location: LHR
-    capacity: 6
-    cost: 7200
 }
 
 training EASA_B1_Continuation {
     renews: EASA_Part66_B1
-    duration: 5 days
     type: continuation
-    location: LHR
-    capacity: 12
-    cost: 3200
 }
 
 training CompanyAuth_Renewal {
     renews: CompanyAuth_B1
-    duration: 2 days
     type: continuation
-    location: LHR
-    capacity: 10
-    cost: 1500
 }
 
 staff JohnSmith {
@@ -102,7 +102,7 @@ staff JohnSmith {
         last_used: 2023-06-15
     }
 
-    training B737_Recurrent {
+    training B737_TypeRating_Renewal {
         scheduled: 2025-08-15
     }
 }

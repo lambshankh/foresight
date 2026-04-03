@@ -11,6 +11,7 @@ block: qualification_block
      | training_block
      | staff_block
      | task_block
+     | subsumption_block
 
 
 // --- Qualifications (DD1-DD4, DD19) ---
@@ -44,11 +45,7 @@ prerequisite_list: "[" "]"                                              -> empty
 training_block: "training" IDENTIFIER "{" training_field+ "}"
 
 training_field: "renews" ":" IDENTIFIER                                 -> train_renews
-              | "duration" ":" duration                                  -> train_duration
               | "type" ":" training_type_value                           -> train_type
-              | "location" ":" IDENTIFIER                                -> train_location
-              | "capacity" ":" INT                                       -> train_capacity
-              | "cost" ":" NUMBER                                        -> train_cost
 
 training_type_value: TRAINING_TYPE_LIT
 TRAINING_TYPE_LIT: "continuation" | "retest"
@@ -104,6 +101,12 @@ requires_field: "qualification" ":" IDENTIFIER                          -> req_q
 
 preference_value: PREFER_LIT
 PREFER_LIT: "least_flexible_first" | "most_experience_first" | "latest_expiry_first" | "earliest_expiry_first" | "lowest_cost_first"
+
+
+// --- Subsumption (DD26) ---
+
+subsumption_block: "subsumption" "{" subsumption_rule+ "}"
+subsumption_rule: IDENTIFIER "subsumes" IDENTIFIER
 
 
 // --- shared terminals ---

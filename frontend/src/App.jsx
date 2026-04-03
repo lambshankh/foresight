@@ -133,10 +133,18 @@ function TasksTab({ data, selectedTask, onSelectTask }) {
 
         {current.eligible.length > 0 && (
           <div className="detail-section">
-            <h4>Eligible Staff ({current.eligible.length})</h4>
+            <h4>
+              Eligible Staff ({current.eligible.length})
+              {current.prefer && (
+                <span className="prefer-label">{current.prefer.replace(/_/g, " ")}</span>
+              )}
+            </h4>
             <div className="eligible-list">
-              {current.eligible.map(name => (
-                <span key={name} className="eligible-name">{name}</span>
+              {current.eligible.map((name, i) => (
+                <span key={name} className="eligible-name">
+                  {current.prefer && <span className="rank-num">#{i + 1}</span>}
+                  {name}
+                </span>
               ))}
             </div>
           </div>

@@ -1,5 +1,3 @@
-"""Temporal validation engine. Checks staff compliance against task windows."""
-
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -30,7 +28,10 @@ def add_duration(d: date, dur: Duration) -> date:
 
 @dataclass
 class Violation:
-    kind: str           # "missing" | "expired" | "expires_during_task" | "not_recent" | "insufficient_staff"
+    kind: str           # "missing" | "expired" | "expires_during_task"
+                        # "not_recent" | "recency_lapses_during_task"
+                        # "no_recency_evidence" | "prerequisite_missing" | "prerequisite_expired"
+                        # "insufficient_experience" | "insufficient_staff"
     task: str
     staff: Optional[str]
     qualification: Optional[str]
@@ -38,7 +39,7 @@ class Violation:
     on_date: Optional[date] = None
 
 
-def _most_recent_renewal(qual_name, staff, model, before):
+def most_recent_renewal(qual_name, staff, model, before):
     qual = model.qualifications.get(qual_name)
     best = None
     for entry in staff.trainings:
@@ -53,27 +54,48 @@ def _most_recent_renewal(qual_name, staff, model, before):
     return best
 
 
-def _effective_issued(qual_name, staff, model, before):
+def effective_issued(qual_name, staff, model, before):
     held = next((h for h in staff.holds if h.qualification == qual_name), None)
     if held is None:
         return None
-    renewal = _most_recent_renewal(qual_name, staff, model, before)
+    renewal = most_recent_renewal(qual_name, staff, model, before)
     if renewal and (held.issued is None or renewal > held.issued):
         return renewal
     return held.issued
 
 
-def _effective_last_used(qual_name, staff, model, before):
-    # training completion counts as "use" for recency purposes
+def effective_last_used(qual_name, staff, model, before):
     held = next((h for h in staff.holds if h.qualification == qual_name), None)
     if held is None:
         return None
-    renewal = _most_recent_renewal(qual_name, staff, model, before)
+    renewal = most_recent_renewal(qual_name, staff, model, before)
     candidates = [d for d in (held.last_used, renewal) if d is not None]
     return max(candidates) if candidates else None
 
 
-def _check_staff_for_task(staff, task, model):
+def _subsumption_closure(model: ForesightModel) -> dict[str, set[str]]:
+    cache: dict[str, set[str]] = {}
+
+    def _reach(name, visiting=None):
+        if name in cache:
+            return cache[name]
+        if visiting is None:
+            visiting = set()
+        if name in visiting:
+            return set()
+        visiting.add(name)
+        result = {name}
+        for target in model.subsumptions.get(name, set()):
+            result |= _reach(target, visiting)
+        cache[name] = result
+        return result
+
+    for q in model.qualifications:
+        _reach(q)
+    return cache
+
+
+def _check_staff_for_task(staff, task, model, subsumption_closure):
     violations = []
     window_start = task.window.start
     window_end   = task.window.end
@@ -83,19 +105,25 @@ def _check_staff_for_task(staff, task, model):
         held = next((h for h in staff.holds if h.qualification == qual_name), None)
 
         if held is None:
-            violations.append(Violation(
-                kind="missing",
-                task=task.name,
-                staff=staff.name,
-                qualification=qual_name,
-                detail=f"{staff.name} does not hold {qual_name}",
-            ))
+            subsuming = next(
+                (h for h in staff.holds
+                 if qual_name in subsumption_closure.get(h.qualification, set())),
+                None
+            )
+            if subsuming is None:
+                violations.append(Violation(
+                    kind="missing",
+                    task=task.name,
+                    staff=staff.name,
+                    qualification=qual_name,
+                    detail=f"{staff.name} does not hold {qual_name}",
+                ))
             continue
 
         if qual is None:
             continue
 
-        issued = _effective_issued(qual_name, staff, model, window_start)
+        issued = effective_issued(qual_name, staff, model, window_start)
         if qual.validity and issued:
             expiry = add_duration(issued, qual.validity)
             if expiry < window_start:
@@ -117,7 +145,7 @@ def _check_staff_for_task(staff, task, model):
                     on_date=expiry,
                 ))
 
-        last_used = _effective_last_used(qual_name, staff, model, window_start)
+        last_used = effective_last_used(qual_name, staff, model, window_start)
         if qual.recency and last_used is None:
             # DD22: no recency evidence
             violations.append(Violation(
@@ -149,34 +177,33 @@ def _check_staff_for_task(staff, task, model):
                 ))
 
         # DD23: prerequisite enforcement
-        if qual is not None:
-            for prereq_name in qual.prerequisites:
-                prereq_qual = model.qualifications.get(prereq_name)
-                prereq_held = next((h for h in staff.holds if h.qualification == prereq_name), None)
-                if prereq_held is None:
-                    violations.append(Violation(
-                        kind="prerequisite_expired",
-                        task=task.name,
-                        staff=staff.name,
-                        qualification=qual_name,
-                        detail=f"{staff.name}'s {qual_name} depends on {prereq_name} which they do not hold",
-                    ))
-                elif prereq_qual and prereq_qual.validity:
-                    prereq_issued = _effective_issued(prereq_name, staff, model, window_start)
-                    if prereq_issued:
-                        prereq_expiry = add_duration(prereq_issued, prereq_qual.validity)
-                        if prereq_expiry < window_start:
-                            violations.append(Violation(
-                                kind="prerequisite_expired",
-                                task=task.name,
-                                staff=staff.name,
-                                qualification=qual_name,
-                                detail=f"{staff.name}'s {qual_name} depends on {prereq_name} which expired on {prereq_expiry}",
-                                on_date=prereq_expiry,
-                            ))
+        for prereq_name in qual.prerequisites:
+            prereq_qual = model.qualifications.get(prereq_name)
+            prereq_held = next((h for h in staff.holds if h.qualification == prereq_name), None)
+            if prereq_held is None:
+                violations.append(Violation(
+                    kind="prerequisite_missing",
+                    task=task.name,
+                    staff=staff.name,
+                    qualification=qual_name,
+                    detail=f"{staff.name}'s {qual_name} depends on {prereq_name} which they do not hold",
+                ))
+            elif prereq_qual and prereq_qual.validity:
+                prereq_issued = effective_issued(prereq_name, staff, model, window_start)
+                if prereq_issued:
+                    prereq_expiry = add_duration(prereq_issued, prereq_qual.validity)
+                    if prereq_expiry < window_start:
+                        violations.append(Violation(
+                            kind="prerequisite_expired",
+                            task=task.name,
+                            staff=staff.name,
+                            qualification=qual_name,
+                            detail=f"{staff.name}'s {qual_name} depends on {prereq_name} which expired on {prereq_expiry}",
+                            on_date=prereq_expiry,
+                        ))
 
         # DD24: minimum experience
-        if qual is not None and qual.min_experience and staff.career_start:
+        if qual.min_experience and staff.career_start:
             experience_met = add_duration(staff.career_start, qual.min_experience)
             if experience_met > window_start:
                 violations.append(Violation(
@@ -192,8 +219,8 @@ def _check_staff_for_task(staff, task, model):
 
 
 def validate(model: ForesightModel) -> list[Violation]:
-    """Run compliance checks across all tasks. Returns every violation found."""
     all_violations = []
+    closure = _subsumption_closure(model)
 
     for task in model.tasks.values():
         if not task.window or not task.requires:
@@ -203,7 +230,7 @@ def validate(model: ForesightModel) -> list[Violation]:
         for staff in model.staff.values():
             if task.requires.role and staff.role != task.requires.role:
                 continue
-            is_ok, violations = _check_staff_for_task(staff, task, model)
+            is_ok, violations = _check_staff_for_task(staff, task, model, closure)
             all_violations.extend(violations)
             if is_ok:
                 eligible += 1

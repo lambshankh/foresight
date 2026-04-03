@@ -1,5 +1,3 @@
-"""foresight domain model. dataclasses for the parsed DSL."""
-
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
@@ -27,11 +25,7 @@ class Qualification:
 class Training:
     name: str
     renews: str
-    duration: Optional[Duration] = None
     type: Optional[str] = None
-    location: Optional[str] = None
-    capacity: Optional[int] = None
-    cost: Optional[float] = None
 
 @dataclass
 class HoldsRecord:
@@ -82,3 +76,4 @@ class ForesightModel:
     trainings: dict[str, Training] = field(default_factory=dict)
     staff: dict[str, Staff] = field(default_factory=dict)
     tasks: dict[str, Task] = field(default_factory=dict)
+    subsumptions: dict[str, set[str]] = field(default_factory=dict)

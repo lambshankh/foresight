@@ -1,8 +1,3 @@
-"""
-Parser for the Foresight DSL.
-Turns .aero files into model objects using Lark.
-"""
-
 from datetime import date
 from pathlib import Path
 from lark import Lark, Transformer
@@ -14,7 +9,6 @@ from .models import (
 
 
 class ForesightError(Exception):
-    """Clean error for syntax or semantic problems in .aero files."""
     def __init__(self, message, line=None, column=None):
         self.line = line
         self.column = column
@@ -23,7 +17,6 @@ class ForesightError(Exception):
 
 class ForesightTransformer(Transformer):
 
-    # terminals
     def DATE(self, t):
         y, m, d = str(t).split("-")
         return date(int(y), int(m), int(d))
@@ -35,7 +28,6 @@ class ForesightTransformer(Transformer):
     def duration_unit(self, i):     return str(i[0])
     def duration(self, i):          return Duration(i[0], i[1])
 
-    # literal terminals
     def CATEGORY_LIT(self, t):      return str(t)
     def RENEWAL_LIT(self, t):       return str(t)
     def EXPERIENCE_NONE(self, t):   return None
@@ -45,7 +37,6 @@ class ForesightTransformer(Transformer):
     def PREFER_LIT(self, t):        return str(t)
     def DURATION_UNIT_LIT(self, t): return str(t)
 
-    # value wrappers
     def category_value(self, i):         return i[0]
     def renewal_value(self, i):          return i[0]
     def experience_value(self, i):       return i[0]
@@ -56,7 +47,6 @@ class ForesightTransformer(Transformer):
     def empty_prereqs(self, i):          return []
     def prereq_ids(self, i):             return list(i)
 
-    # qualification fields
     def qual_category(self, i):        return ("category", i[0])
     def qual_regulatory_body(self, i): return ("regulatory_body", i[0])
     def qual_issuing_body(self, i):    return ("issuing_body", i[0])
@@ -72,20 +62,14 @@ class ForesightTransformer(Transformer):
         for k, v in i[1:]: setattr(q, k, v)
         return ("qualification", q)
 
-    # training fields
     def train_renews(self, i):   return ("renews", i[0])
-    def train_duration(self, i): return ("duration", i[0])
     def train_type(self, i):     return ("type", i[0])
-    def train_location(self, i): return ("location", i[0])
-    def train_capacity(self, i): return ("capacity", i[0])
-    def train_cost(self, i):     return ("cost", i[0])
 
     def training_block(self, i):
         t = Training(name=i[0], renews="")
         for k, v in i[1:]: setattr(t, k, v)
         return ("training", t)
 
-    # staff fields
     def staff_role(self, i):         return ("role", i[0])
     def staff_base(self, i):         return ("base", i[0])
     def staff_career_start(self, i): return ("career_start", i[0])
@@ -120,7 +104,6 @@ class ForesightTransformer(Transformer):
             else:                   setattr(s, k, v)
         return ("staff", s)
 
-    # task fields
     def task_description(self, i): return ("description", i[0])
     def task_type(self, i):        return ("type", i[0])
     def task_aircraft(self, i):    return ("aircraft", i[0])
@@ -154,7 +137,12 @@ class ForesightTransformer(Transformer):
             if isinstance(item, tuple): setattr(t, item[0], item[1])
         return ("task", t)
 
-    # top level
+    def subsumption_rule(self, i):
+        return (str(i[0]), str(i[1]))   # (subsuming, subsumed)
+
+    def subsumption_block(self, i):
+        return ("subsumption", list(i))
+
     def block(self, i): return i[0]
 
     def start(self, i):
@@ -164,69 +152,64 @@ class ForesightTransformer(Transformer):
             elif btype == "training":     model.trainings[obj.name] = obj
             elif btype == "staff":        model.staff[obj.name] = obj
             elif btype == "task":         model.tasks[obj.name] = obj
+            elif btype == "subsumption":
+                for subsuming, subsumed in obj:
+                    model.subsumptions.setdefault(subsuming, set()).add(subsumed)
         return model
 
-
-# parser setup
 
 _GRAMMAR = Path(__file__).parent / "grammar.lark"
 _parser = Lark(_GRAMMAR.read_text(), parser="earley", propagate_positions=True)
 _transformer = ForesightTransformer()
 
 def _validate_references(model: ForesightModel):
-    """Check cross-references between blocks. Raises ForesightError on problems."""
     errors = []
     qual_names = set(model.qualifications)
     training_names = set(model.trainings)
 
-    # prerequisites → qualification
     for q in model.qualifications.values():
         for p in q.prerequisites:
             if p not in qual_names:
                 errors.append(
                     f"qualification '{q.name}': prerequisite '{p}' is not defined")
 
-    # circular prerequisites (DFS)
-    def _has_cycle(name, visiting):
-        if name in visiting:
-            cycle = " -> ".join(list(visiting) + [name])
+    completed = set()
+
+    def _has_cycle(name, path):
+        if name in path:
+            cycle = " -> ".join(list(path) + [name])
             errors.append(f"circular prerequisite chain: {cycle}")
             return True
-        if name not in qual_names:
+        if name in completed or name not in qual_names:
             return False
-        visiting.add(name)
+        path.add(name)
         for p in model.qualifications[name].prerequisites:
-            if _has_cycle(p, visiting):
+            if _has_cycle(p, path):
                 return True
-        visiting.discard(name)
+        path.discard(name)
+        completed.add(name)
         return False
 
-    visited = set()
     for name in qual_names:
-        if name not in visited:
-            _has_cycle(name, visited)
+        _has_cycle(name, set())
 
-    # training renews → qualification
     for t in model.trainings.values():
         if t.renews and t.renews not in qual_names:
             errors.append(
                 f"training '{t.name}': renews qualification '{t.renews}' which is not defined")
 
-    # staff holds → qualification
     for s in model.staff.values():
         for h in s.holds:
             if h.qualification not in qual_names:
                 errors.append(
                     f"staff '{s.name}': holds qualification '{h.qualification}' which is not defined")
 
-    # staff scheduled training → training
     for s in model.staff.values():
         for st in s.trainings:
             if st.training not in training_names:
                 errors.append(
                     f"staff '{s.name}': scheduled training '{st.training}' is not defined")
 
-    # task requires → qualification
     for t in model.tasks.values():
         if t.requires:
             for qn in t.requires.qualifications:
@@ -234,12 +217,43 @@ def _validate_references(model: ForesightModel):
                     errors.append(
                         f"task '{t.name}': requires qualification '{qn}' which is not defined")
 
+    for t in model.tasks.values():
+        if t.window and t.window.start > t.window.end:
+            errors.append(
+                f"task '{t.name}': window start {t.window.start} is after end {t.window.end}")
+
+    for subsuming, subsumed_set in model.subsumptions.items():
+        if subsuming not in qual_names:
+            errors.append(f"subsumption: '{subsuming}' is not a defined qualification")
+        for subsumed in subsumed_set:
+            if subsumed not in qual_names:
+                errors.append(
+                    f"subsumption: '{subsumed}' (subsumed by '{subsuming}') is not a defined qualification")
+
+    sub_completed = set()
+
+    def _sub_cycle(name, path):
+        if name in path:
+            errors.append("circular subsumption chain: " + " -> ".join(list(path) + [name]))
+            return True
+        if name in sub_completed or name not in model.subsumptions:
+            return False
+        path.add(name)
+        for target in model.subsumptions[name]:
+            if _sub_cycle(target, path):
+                return True
+        path.discard(name)
+        sub_completed.add(name)
+        return False
+
+    for name in list(model.subsumptions):
+        _sub_cycle(name, set())
+
     if errors:
         raise ForesightError("Semantic errors:\n  " + "\n  ".join(errors))
 
 
 def _format_lark_error(e):
-    """Turn a Lark parse exception into a clean one-line message."""
     line = getattr(e, "line", None)
     col = getattr(e, "column", None)
     loc = f"line {line}" if line else "unknown location"
@@ -263,7 +277,6 @@ def _format_lark_error(e):
 
 
 def parse_foresight(text: str) -> ForesightModel:
-    """Parse DSL source text. Raises ForesightError on syntax or semantic errors."""
     try:
         tree = _parser.parse(text)
     except (UnexpectedToken, UnexpectedCharacters) as e:

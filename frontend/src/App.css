@@ -482,6 +482,18 @@ header h1 {
   background: #fff;
 }
 
+.export-btn {
+  margin-left: auto;
+  padding: 6px 14px;
+  font-size: 13px;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.export-btn:hover { background: #1d4ed8; }
+
 table {
   width: 100%;
   border-collapse: collapse;

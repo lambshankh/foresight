@@ -28,4 +28,3 @@ htmlcov/
 # Misc
 *.log
 **.egg-info/
-**.md

@@ -1,16 +1,17 @@
-from .parser import parse_foresight, parse_file, ForesightError
-from .models import ForesightModel, Qualification, Training, Staff, Task
-from .validator import validate, Violation
+from .models import ForesightError, ForesightModel, Qualification, Training, Staff, Task
+from .parser import parse_foresight, parse_file
+from .validator import check_references, validate, Violation
 
 __all__ = [
-    "parse_foresight",
-    "parse_file",
     "ForesightError",
     "ForesightModel",
     "Qualification",
     "Training",
     "Staff",
     "Task",
+    "parse_foresight",
+    "parse_file",
+    "check_references",
     "validate",
     "Violation",
 ]

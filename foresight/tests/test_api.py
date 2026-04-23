@@ -168,7 +168,7 @@ task T {
 
 
 def test_min_expiry_qual_no_validity_skipped():
-    # qual has no validity → _min_expiry skips it and returns None → fallback sort key used
+    # qual has no validity so _min_expiry skips it and returns None. fallback sort key used
     dsl = """\
 qualification Q {
     category: licence
@@ -207,7 +207,7 @@ task T {
 
 
 def test_min_expiry_no_issued_skipped():
-    # holds block with no issued → effective_issued returns None → _min_expiry skips
+    # holds block with no issued -> effective_issued returns None -> _min_expiry skips
     dsl = """\
 qualification Q {
     category: licence
@@ -259,6 +259,16 @@ def test_example_covers_lowest_cost_first():
     assert engine["prefer"] == "lowest_cost_first"
 
 
+def test_rank_eligible_unrecognized_prefer_returns_unchanged():
+    from foresight.validator import rank_eligible
+    from foresight.models import Task
+
+    staff = ["Alice", "Bob"]
+    task = Task(name="T", prefer="unrecognized_value")
+    result = rank_eligible(staff, task, None, {})
+    assert result is staff
+
+
 def test_task_without_window_not_in_response():
     dsl = """\
 qualification Q {
@@ -275,3 +285,43 @@ task NoWindow {
     assert resp.status_code == 200
     task_names = [t["name"] for t in resp.json()["tasks"]]
     assert "NoWindow" not in task_names
+
+
+def test_validate_undefined_reference_returns_422():
+    dsl = """\
+qualification Q {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: []
+}
+staff Alice {
+    role: certifying
+    holds UndefinedQual {
+        issued: 2025-01-01
+    }
+}
+"""
+    resp = _post_dsl(dsl)
+    assert resp.status_code == 422
+    assert "Semantic error" in resp.json()["detail"]
+
+
+def test_validate_circular_prerequisite_returns_422():
+    dsl = """\
+qualification A {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: [B]
+}
+qualification B {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: [A]
+}
+"""
+    resp = _post_dsl(dsl)
+    assert resp.status_code == 422
+    assert "circular" in resp.json()["detail"]

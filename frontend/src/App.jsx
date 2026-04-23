@@ -1,6 +1,8 @@
 import { useState } from "react"
 import "./App.css"
 
+const API_URL = "http://localhost:8000/validate"
+
 const KIND_COLOUR = {
   expired:             "#dc2626",
   expires_during_task: "#d97706",
@@ -18,7 +20,7 @@ function Badge({ kind }) {
 }
 
 
-// --- Overview tab ---
+// Overview tab
 
 function OverviewTab({ data, onSelectTask }) {
   const ov = data.overview
@@ -87,7 +89,7 @@ function OverviewTab({ data, onSelectTask }) {
 }
 
 
-// --- Tasks tab ---
+// Tasks tab
 
 function TasksTab({ data, selectedTask, onSelectTask }) {
   const current = data.tasks.find(t => t.name === selectedTask) || data.tasks[0]
@@ -199,7 +201,7 @@ function NonCompliantList({ violations }) {
 }
 
 
-// --- Staff tab ---
+// Staff tab
 
 function StaffTab({ data }) {
   const [search, setSearch] = useState("")
@@ -268,7 +270,7 @@ function StaffTab({ data }) {
 }
 
 
-// --- Violations tab ---
+// Violations tab
 
 function ViolationsTab({ data }) {
   const [filterKind, setFilterKind] = useState("")
@@ -286,6 +288,17 @@ function ViolationsTab({ data }) {
     (!filterStaff || v.staff === filterStaff)
   )
 
+  function handleExport() {
+    const json = JSON.stringify(data.violations, null, 2)
+    const blob = new Blob([json], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "foresight-violations.json"
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div>
       <div className="filters">
@@ -301,6 +314,7 @@ function ViolationsTab({ data }) {
           <option value="">All staff</option>
           {staffNames.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <button className="export-btn" onClick={handleExport}>Export</button>
       </div>
 
       <table>
@@ -333,7 +347,7 @@ function ViolationsTab({ data }) {
 }
 
 
-// --- App shell ---
+// App shell
 
 const TABS = ["Overview", "Tasks", "Staff", "Violations"]
 
@@ -361,7 +375,7 @@ export default function App() {
     body.append("file", file)
 
     try {
-      const res  = await fetch("http://localhost:8000/validate", { method: "POST", body })
+      const res  = await fetch(API_URL, { method: "POST", body })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail ?? "Unknown error")
       setResult(data)

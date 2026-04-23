@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
 
-from .models import Duration, ForesightModel
+from .models import Duration, ForesightError, ForesightModel
 
 
 def add_duration(d: date, dur: Duration) -> date:
@@ -21,7 +21,7 @@ def add_duration(d: date, dur: Duration) -> date:
         try:
             return d.replace(year=d.year + dur.value)
         except ValueError:
-            return date(d.year + dur.value, d.month, 28)  # Feb 29 edge case
+            return date(d.year + dur.value, d.month, 28) # feb 29 edge case
 
     raise ValueError(f"Unknown duration unit: {dur.unit!r}")
 
@@ -39,15 +39,110 @@ class Violation:
     on_date: Optional[date] = None
 
 
+def check_references(model: ForesightModel) -> None:
+    """Validate referential integrity of a ForesightModel.
+
+    Checks that all names used in the model (qualification references,
+    training references, prerequisite chains, subsumption rules, task
+    windows) resolve to defined entities and contain no cycles.
+
+    Raises ForesightError if any violations are found.
+    """
+    errors = []
+    qual_names = set(model.qualifications)
+    training_names = set(model.trainings)
+
+    for q in model.qualifications.values():
+        for p in q.prerequisites:
+            if p not in qual_names:
+                errors.append(
+                    f"qualification '{q.name}': prerequisite '{p}' is not defined")
+
+    completed: set[str] = set()
+
+    def _prereq_cycle(name, path):
+        if name in path:
+            errors.append("circular prerequisite chain: " + " -> ".join(list(path) + [name]))
+            return True
+        if name in completed or name not in qual_names:
+            return False
+        path.add(name)
+        for p in model.qualifications[name].prerequisites:
+            if _prereq_cycle(p, path):
+                return True
+        path.discard(name)
+        completed.add(name)
+        return False
+
+    for name in qual_names:
+        _prereq_cycle(name, set())
+
+    for t in model.trainings.values():
+        if t.renews and t.renews not in qual_names:
+            errors.append(
+                f"training '{t.name}': renews qualification '{t.renews}' which is not defined")
+
+    for s in model.staff.values():
+        for h in s.holds:
+            if h.qualification not in qual_names:
+                errors.append(
+                    f"staff '{s.name}': holds qualification '{h.qualification}' which is not defined")
+        for st in s.trainings:
+            if st.training not in training_names:
+                errors.append(
+                    f"staff '{s.name}': scheduled training '{st.training}' is not defined")
+
+    for t in model.tasks.values():
+        if t.requires:
+            for qn in t.requires.qualifications:
+                if qn not in qual_names:
+                    errors.append(
+                        f"task '{t.name}': requires qualification '{qn}' which is not defined")
+        if t.window and t.window.start > t.window.end:
+            errors.append(
+                f"task '{t.name}': window start {t.window.start} is after end {t.window.end}")
+
+    for subsuming, subsumed_set in model.subsumptions.items():
+        if subsuming not in qual_names:
+            errors.append(f"subsumption: '{subsuming}' is not a defined qualification")
+        for subsumed in subsumed_set:
+            if subsumed not in qual_names:
+                errors.append(
+                    f"subsumption: '{subsumed}' (subsumed by '{subsuming}') is not a defined qualification")
+
+    sub_completed: set[str] = set()
+
+    def _sub_cycle(name, path):
+        if name in path:
+            errors.append("circular subsumption chain: " + " -> ".join(list(path) + [name]))
+            return True
+        if name in sub_completed or name not in model.subsumptions:
+            return False
+        path.add(name)
+        for target in model.subsumptions[name]:
+            if _sub_cycle(target, path):
+                return True
+        path.discard(name)
+        sub_completed.add(name)
+        return False
+
+    for name in list(model.subsumptions):
+        _sub_cycle(name, set())
+
+    if errors:
+        raise ForesightError("Semantic errors:\n  " + "\n  ".join(errors))
+
+
 def most_recent_renewal(qual_name, staff, model, before):
     qual = model.qualifications.get(qual_name)
     best = None
     for entry in staff.trainings:
         training = model.trainings.get(entry.training)
         if training and training.renews == qual_name:
-            # DD25: renewal type matching
-            if qual and qual.renewal == "retest" and training.type != "retest":
-                continue
+            if qual and qual.renewal and training.type:
+                expected = "retest" if qual.renewal == "retest" else "continuation"
+                if training.type != expected:
+                    continue
             if entry.scheduled and entry.scheduled <= before:
                 if best is None or entry.scheduled > best:
                     best = entry.scheduled
@@ -216,6 +311,41 @@ def _check_staff_for_task(staff, task, model, subsumption_closure):
                 ))
 
     return len(violations) == 0, violations
+
+
+def min_expiry(staff, task, model):
+    """Return the earliest expiry date across all required qualifications for a staff member."""
+    earliest = None
+    for qual_name in task.requires.qualifications:
+        qual = model.qualifications.get(qual_name)
+        if qual is None or qual.validity is None:
+            continue
+        issued = effective_issued(qual_name, staff, model, task.window.start)
+        if issued is None:
+            continue
+        expiry = add_duration(issued, qual.validity)
+        if earliest is None or expiry < earliest:
+            earliest = expiry
+    return earliest
+
+
+def rank_eligible(eligible_staff, task, model, eligibility_counts):
+    """Sort eligible staff according to the task's prefer strategy."""
+    prefer = task.prefer
+    if prefer is None:
+        return eligible_staff
+
+    if prefer == "least_flexible_first":
+        return sorted(eligible_staff, key=lambda s: eligibility_counts.get(s.name, 0))
+    if prefer == "most_experience_first":
+        return sorted(eligible_staff, key=lambda s: s.career_start or date.max)
+    if prefer == "lowest_cost_first":
+        return sorted(eligible_staff, key=lambda s: s.day_rate if s.day_rate is not None else float("inf"))
+    if prefer == "latest_expiry_first":
+        return sorted(eligible_staff, key=lambda s: min_expiry(s, task, model) or date.min, reverse=True)
+    if prefer == "earliest_expiry_first":
+        return sorted(eligible_staff, key=lambda s: min_expiry(s, task, model) or date.max)
+    return eligible_staff
 
 
 def validate(model: ForesightModel) -> list[Violation]:

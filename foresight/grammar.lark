@@ -1,9 +1,5 @@
 // Foresight DSL Grammar
 // Lark EBNF, parsed with Earley.
-//
-// Four block types: qualification, training, staff, task.
-// See design decisions DD1-DD21 in the report for the rationale
-// behind each field.
 
 start: block+
 
@@ -14,7 +10,7 @@ block: qualification_block
      | subsumption_block
 
 
-// --- Qualifications (DD1-DD4, DD19) ---
+// Qualification
 
 qualification_block: "qualification" IDENTIFIER "{" qualification_field+ "}"
 
@@ -40,7 +36,7 @@ prerequisite_list: "[" "]"                                              -> empty
                  | "[" IDENTIFIER ("," IDENTIFIER)* "]"                 -> prereq_ids
 
 
-// --- Training (DD8, DD20) ---
+// Training
 
 training_block: "training" IDENTIFIER "{" training_field+ "}"
 
@@ -51,9 +47,7 @@ training_type_value: TRAINING_TYPE_LIT
 TRAINING_TYPE_LIT: "continuation" | "retest"
 
 
-// --- Staff (DD5-DD7, DD9, DD19, DD21) ---
-// Staff blocks contain both scalar fields (role, base, etc.)
-// and nested sub-blocks for holds/training records.
+// Staff 
 
 staff_block: "staff" IDENTIFIER "{" staff_field+ "}"
 
@@ -75,7 +69,7 @@ staff_training_block: "training" IDENTIFIER "{" staff_training_field+ "}"
 staff_training_field: "scheduled" ":" DATE                              -> training_scheduled
 
 
-// --- Tasks (DD10-DD16) ---
+// Task
 
 task_block: "task" IDENTIFIER "{" task_field+ "}"
 
@@ -103,13 +97,13 @@ preference_value: PREFER_LIT
 PREFER_LIT: "least_flexible_first" | "most_experience_first" | "latest_expiry_first" | "earliest_expiry_first" | "lowest_cost_first"
 
 
-// --- Subsumption (DD26) ---
+// Subsumption
 
 subsumption_block: "subsumption" "{" subsumption_rule+ "}"
 subsumption_rule: IDENTIFIER "subsumes" IDENTIFIER
 
 
-// --- shared terminals ---
+// shared terminals 
 
 duration: INT duration_unit
 duration_unit: DURATION_UNIT_LIT

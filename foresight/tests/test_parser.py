@@ -1,8 +1,8 @@
 from pathlib import Path
 import pytest
-from foresight.parser import parse_file, parse_foresight, ForesightError
+from foresight.parser import parse_file, parse_foresight
 from foresight.models import (
-    Qualification, Training, Staff, Task, Duration, ForesightModel,
+    ForesightError, Qualification, Training, Staff, Task, Duration, ForesightModel,
 )
 
 _EXAMPLE = Path(__file__).parent.parent / "examples" / "example.aero"
@@ -87,114 +87,6 @@ def test_syntax_error_includes_line_number():
     assert exc_info.value.line is not None
 
 
-def test_holds_references_undefined_qualification():
-    dsl = _MINIMAL_QUAL + """
-staff Alice {
-    role: certifying
-    holds FakeQual {
-        issued: 2025-01-01
-    }
-}
-"""
-    with pytest.raises(ForesightError, match="holds qualification 'FakeQual'.*not defined"):
-        parse_foresight(dsl)
-
-def test_training_renews_undefined_qualification():
-    dsl = _MINIMAL_QUAL + """
-training SomeCourse {
-    renews: NoSuchQual
-}
-"""
-    with pytest.raises(ForesightError, match="renews qualification 'NoSuchQual'.*not defined"):
-        parse_foresight(dsl)
-
-def test_prerequisite_references_undefined_qualification():
-    dsl = """\
-qualification A {
-    category: licence
-    validity: 12 months
-    renewal: training
-    prerequisites: [NonExistent]
-}
-"""
-    with pytest.raises(ForesightError, match="prerequisite 'NonExistent'.*not defined"):
-        parse_foresight(dsl)
-
-def test_circular_prerequisites():
-    dsl = """\
-qualification A {
-    category: licence
-    validity: 12 months
-    renewal: training
-    prerequisites: [B]
-}
-qualification B {
-    category: licence
-    validity: 12 months
-    renewal: training
-    prerequisites: [A]
-}
-"""
-    with pytest.raises(ForesightError, match="circular prerequisite"):
-        parse_foresight(dsl)
-
-def test_task_requires_undefined_qualification():
-    dsl = _MINIMAL_QUAL + """
-task SomeTask {
-    type: base_maintenance
-    window {
-        start: 2025-06-01
-        end: 2025-06-15
-    }
-    requires {
-        qualification: GhostQual
-        min_staff: 1
-    }
-}
-"""
-    with pytest.raises(ForesightError, match="requires qualification 'GhostQual'.*not defined"):
-        parse_foresight(dsl)
-
-def test_scheduled_training_references_undefined_training():
-    dsl = _MINIMAL_QUAL + """
-staff Bob {
-    role: certifying
-    holds TestQual {
-        issued: 2025-01-01
-    }
-    training FakeCourse {
-        scheduled: 2025-07-01
-    }
-}
-"""
-    with pytest.raises(ForesightError, match="scheduled training 'FakeCourse'.*not defined"):
-        parse_foresight(dsl)
-
-def test_valid_file_passes_semantic_checks():
-    model = _load()
-    assert len(model.qualifications) > 0
-
-
-def test_window_start_after_end_raises():
-    dsl = """\
-qualification Q {
-    category: licence
-    validity: 12 months
-    renewal: training
-    prerequisites: []
-}
-task BadWindow {
-    type: base_maintenance
-    window {
-        start: 2025-06-15
-        end: 2025-06-01
-    }
-}
-"""
-    with pytest.raises(ForesightError, match="window start.*after end"):
-        parse_foresight(dsl)
-
-
 _TWO_QUALS = """\
 qualification A1 {
     category: licence
@@ -271,47 +163,6 @@ def test_no_subsumption_block_defaults_empty():
     assert model.subsumptions == {}
 
 
-def test_subsumption_undefined_subsuming_qual():
-    dsl = _TWO_QUALS + "subsumption {\n    GhostQual subsumes A1\n}\n"
-    with pytest.raises(ForesightError, match="'GhostQual'.*not a defined qualification"):
-        parse_foresight(dsl)
-
-
-def test_subsumption_undefined_subsumed_qual():
-    dsl = _TWO_QUALS + "subsumption {\n    B1 subsumes GhostTarget\n}\n"
-    with pytest.raises(ForesightError, match="'GhostTarget'.*not a defined qualification"):
-        parse_foresight(dsl)
-
-
-def test_circular_subsumption_two_nodes():
-    dsl = _TWO_QUALS + """\
-subsumption {
-    A1 subsumes B1
-    B1 subsumes A1
-}
-"""
-    with pytest.raises(ForesightError, match="circular subsumption chain"):
-        parse_foresight(dsl)
-
-
-def test_circular_subsumption_three_nodes():
-    dsl = _THREE_QUALS + """\
-subsumption {
-    A1 subsumes B1
-    B1 subsumes C1
-    C1 subsumes A1
-}
-"""
-    with pytest.raises(ForesightError, match="circular subsumption chain"):
-        parse_foresight(dsl)
-
-
-def test_self_subsumption():
-    dsl = _TWO_QUALS + "subsumption {\n    A1 subsumes A1\n}\n"
-    with pytest.raises(ForesightError, match="circular subsumption chain"):
-        parse_foresight(dsl)
-
-
 def test_example_still_parses():
     model = _load()
     assert "EASA_Part66_B1" in model.subsumptions
@@ -359,68 +210,7 @@ def test_format_lark_error_unexpected_chars_empty_allowed():
     exc.line = 2
     exc.column = 5
     exc.char = "@"
-    exc.allowed = frozenset()  # empty → hits the "unexpected" branch
+    exc.allowed = frozenset()  # empty -> hits the "unexpected" branch
     msg, line, col = _format_lark_error(exc)
     assert "unexpected" in msg
     assert line == 2
-
-
-def _print_model(model):
-    print("=" * 60)
-    print("PARSE RESULT")
-    print("=" * 60)
-
-    print(f"\nQualifications ({len(model.qualifications)}):")
-    for name, q in model.qualifications.items():
-        print(f"  {name}")
-        print(f"    category:       {q.category}")
-        print(f"    validity:       {q.validity}")
-        print(f"    recency:        {q.recency}")
-        print(f"    renewal:        {q.renewal}")
-        print(f"    prerequisites:  {q.prerequisites}")
-        print(f"    min_experience: {q.min_experience}")
-
-    print(f"\nTraining Definitions ({len(model.trainings)}):")
-    for name, t in model.trainings.items():
-        print(f"  {name}")
-        print(f"    renews:   {t.renews}")
-        print(f"    type:     {t.type}")
-
-    print(f"\nStaff ({len(model.staff)}):")
-    for name, s in model.staff.items():
-        print(f"  {name}")
-        print(f"    role:         {s.role}")
-        print(f"    base:         {s.base}")
-        print(f"    career_start: {s.career_start}")
-        print(f"    day_rate:     {s.day_rate}")
-        print(f"    holds:")
-        for h in s.holds:
-            print(f"      {h.qualification} (issued: {h.issued})")
-        if s.trainings:
-            print(f"    scheduled training:")
-            for tr in s.trainings:
-                print(f"      {tr.training} (scheduled: {tr.scheduled})")
-
-    print(f"\nTasks ({len(model.tasks)}):")
-    for name, t in model.tasks.items():
-        print(f"  {name}")
-        print(f"    type:     {t.type}")
-        print(f"    aircraft: {t.aircraft}")
-        print(f"    location: {t.location}")
-        if t.window:
-            print(f"    window:   {t.window.start} to {t.window.end}")
-        if t.requires:
-            print(f"    requires:")
-            for q in t.requires.qualifications:
-                print(f"      qualification: {q}")
-            print(f"      role:      {t.requires.role}")
-            print(f"      min_staff: {t.requires.min_staff}")
-        print(f"    prefer:   {t.prefer}")
-
-    print("\n" + "=" * 60)
-    print("PARSE SUCCESSFUL")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
-    _print_model(_load())

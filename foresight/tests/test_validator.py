@@ -1,9 +1,11 @@
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from foresight.parser import parse_file, parse_foresight
-from foresight.models import Duration
-from foresight.validator import validate, add_duration, Violation
+from foresight.models import Duration, ForesightError
+from foresight.validator import check_references, validate, add_duration, Violation
 
 _EXAMPLE = Path(__file__).parent.parent / "examples" / "example.aero"
 
@@ -14,9 +16,9 @@ def _model():
 
 def _violations_for(violations, *, task=None, staff=None, kind=None, qualification=None):
     result = violations
-    if task:          result = [v for v in result if v.task == task]
-    if staff:         result = [v for v in result if v.staff == staff]
-    if kind:          result = [v for v in result if v.kind == kind]
+    if task: result = [v for v in result if v.task == task]
+    if staff: result = [v for v in result if v.staff == staff]
+    if kind: result = [v for v in result if v.kind == kind]
     if qualification: result = [v for v in result if v.qualification == qualification]
     return result
 
@@ -31,7 +33,7 @@ def test_add_duration_months_year_rollover():
     assert add_duration(date(2025, 11, 1), Duration(3, "months")) == date(2026, 2, 1)
 
 def test_add_duration_months_clips_to_end_of_month():
-    # Jan 31 + 1 month — Feb doesn't have 31 days
+    # Jan 31 + 1 month - Feb doesn't have 31 days
     assert add_duration(date(2025, 1, 31), Duration(1, "months")) == date(2025, 2, 28)
 
 def test_add_duration_years():
@@ -47,7 +49,7 @@ def test_example_has_violations():
     assert len(validate(_model())) > 0
 
 
-# JohnSmith — CompanyAuth_B1 expired before B737_CCheck
+# JohnSmith - CompanyAuth_B1 expired before B737_CCheck
 # issued 2023-01-10, validity 24 months → expired 2025-01-10, task starts 2025-09-01
 
 def test_johnsmith_companyauth_expired_for_ccheck():
@@ -60,7 +62,7 @@ def test_johnsmith_companyauth_expired_for_ccheck():
     assert matches[0].on_date == date(2025, 1, 10)
 
 
-# JohnSmith — B737_TypeRating should NOT be flagged for B737_CCheck
+# JohnSmith - B737_TypeRating should NOT be flagged for B737_CCheck
 # B737_TypeRating_Renewal (retest) scheduled 2025-08-15 renews it; B737_Recurrent is
 # continuation-type and is rejected by DD25 (retest-only qual)
 
@@ -73,7 +75,7 @@ def test_johnsmith_b737_typerating_not_expired_after_renewal():
     assert false_alarms == []
 
 
-# SarahConnor — B737_TypeRating recency lapsed for B737_LineCheck
+# SarahConnor - B737_TypeRating recency lapsed for B737_LineCheck
 # renewal resets recency to 2025-03-01, +90 days = lapsed 2025-05-30, task is 2025-06-10
 
 def test_sarah_typerating_not_recent_for_linecheck():
@@ -86,7 +88,7 @@ def test_sarah_typerating_not_recent_for_linecheck():
     assert matches[0].on_date == date(2025, 5, 30)
 
 
-# AliReza — should be the one eligible candidate for B737_LineCheck
+# AliReza - should be the one eligible candidate for B737_LineCheck
 
 def test_alireza_eligible_for_linecheck():
     violations = validate(_model())
@@ -97,7 +99,7 @@ def test_linecheck_not_understaffed():
     assert _violations_for(violations, task="B737_LineCheck_LGW", kind="insufficient_staff") == []
 
 
-# B737_CCheck_LHR — needs 2, nobody qualifies (John expired, Sarah missing qual, Ali stale recency)
+# B737_CCheck_LHR - needs 2, nobody qualifies (John expired, Sarah missing qual, Ali stale recency)
 
 def test_ccheck_understaffed():
     violations = validate(_model())
@@ -106,7 +108,7 @@ def test_ccheck_understaffed():
     assert "2" in matches[0].detail
 
 
-# AliReza — CompanyAuth_B1 recency lapsed just before B737_EngineChange
+# AliReza - CompanyAuth_B1 recency lapsed just before B737_EngineChange
 # last_used 2025-03-15, +6 months = lapsed 2025-09-15, task starts 2025-10-01
 
 def test_alireza_companyauth_not_recent_for_engine_change():
@@ -119,8 +121,6 @@ def test_alireza_companyauth_not_recent_for_engine_change():
     assert matches[0].on_date == date(2025, 9, 15)
 
 
-# missing qualification is reported, not silently skipped
-
 def test_sarah_missing_companyauth_for_ccheck():
     violations = validate(_model())
     matches = _violations_for(violations,
@@ -129,8 +129,6 @@ def test_sarah_missing_companyauth_for_ccheck():
     )
     assert len(matches) == 1
 
-
-# DD22: no_recency_evidence
 
 def test_no_recency_evidence():
     dsl = """\
@@ -159,7 +157,7 @@ task CheckX {
     }
 }
 """
-    # Alice holds Qual_A but has no last_used — recency cannot be verified
+    # Alice holds Qual_A but has no last_used - recency cannot be verified
     model = parse_foresight(dsl)
     violations = validate(model)
     matches = _violations_for(violations, kind="no_recency_evidence", staff="Alice")
@@ -197,9 +195,6 @@ task CheckY {
     model = parse_foresight(dsl)
     violations = validate(model)
     assert _violations_for(violations, kind="no_recency_evidence") == []
-
-
-# DD25: renewal type matching
 
 def test_retest_qual_not_renewed_by_continuation():
     dsl = """\
@@ -279,7 +274,7 @@ task TaskB {
     }
 }
 """
-    # RetestCourse is type retest — matches renewal requirement
+    # RetestCourse is type retest - matches renewal requirement
     # renewed on 2025-05-15, +12 months = valid until 2026-05-15
     model = parse_foresight(dsl)
     violations = validate(model)
@@ -358,9 +353,6 @@ task CheckZ {
     assert len(matches) == 1
     assert matches[0].on_date == date(2025, 6, 4)
 
-
-# DD23: prerequisite_expired
-
 def test_prerequisite_expired():
     dsl = """\
 qualification BaseQual {
@@ -400,7 +392,7 @@ task TaskC {
     }
 }
 """
-    # BaseQual issued 2023-01-01, validity 12 months → expired 2024-01-01
+    # BaseQual issued 2023-01-01, validity 12 months, expired 2024-01-01
     model = parse_foresight(dsl)
     violations = validate(model)
     matches = _violations_for(violations, kind="prerequisite_expired", qualification="AdvancedQual")
@@ -447,8 +439,6 @@ task TaskD {
     assert "do not hold" in matches[0].detail
 
 
-# DD24: insufficient_experience
-
 def test_insufficient_experience():
     dsl = """\
 qualification SeniorAuth {
@@ -477,7 +467,7 @@ task TaskE {
     }
 }
 """
-    # Hank started 2022-01-01, needs 5 years → meets requirement 2027-01-01
+    # Hank started 2022-01-01, needs 5 years, meets requirement 2027-01-01
     model = parse_foresight(dsl)
     violations = validate(model)
     matches = _violations_for(violations, kind="insufficient_experience", staff="Hank")
@@ -522,7 +512,7 @@ from foresight.models import Staff, HoldsRecord, Task, Requirements, TimeWindow,
 
 
 def test_add_duration_feb29_years_clips_to_feb28():
-    # Feb 29 (leap year) + 1 year lands on non-leap → clipped to Feb 28
+    # Feb 29 (leap year) + 1 year lands on non-leap, clipped to Feb 28
     assert add_duration(date(2024, 2, 29), Duration(1, "years")) == date(2025, 2, 28)
 
 
@@ -558,7 +548,7 @@ def test_qual_not_in_model_gracefully_skipped():
     )
     model = ForesightModel(staff={"Ghost": staff}, tasks={"GhostTask": task})
     violations = validate(model)
-    # qual definition missing → graceful skip, no per-staff violation
+    # qual definition missing=, graceful skip, no per-staff violation
     assert [v for v in violations if v.staff == "Ghost"] == []
 
 
@@ -614,7 +604,7 @@ task TaskX {
 
 
 def test_subsumption_satisfies_direct_requirement():
-    # Staff holds B1; task requires A1; B1 subsumes A1 → no missing violation
+    # Staff holds B1; task requires A1; B1 subsumes A1, no missing violation
     dsl = _SUBSUMPTION_BASE + """\
 staff StaffB {
     role: certifying
@@ -628,7 +618,7 @@ staff StaffB {
 
 
 def test_subsumption_transitivity():
-    # Staff holds C1; C1 subsumes B1 subsumes A1; task requires A1 → no missing
+    # Staff holds C1; C1 subsumes B1 subsumes A1; task requires A1,  no missing
     dsl = _SUBSUMPTION_BASE + """\
 staff StaffC {
     role: certifying
@@ -642,7 +632,7 @@ staff StaffC {
 
 
 def test_subsumption_is_not_symmetric():
-    # Staff holds A1; task requires B1; A1 does NOT subsume B1 → missing
+    # Staff holds A1; task requires B1; A1 does NOT subsume B1, missing
     dsl = _SUBSUMPTION_BASE + """\
 staff StaffA {
     role: certifying
@@ -662,7 +652,7 @@ task TaskB1 {
 
 
 def test_no_subsuming_qual_fails():
-    # Staff holds an unrelated qual; neither direct nor subsumed → missing
+    # Staff holds an unrelated qual; neither direct nor subsumed, missing
     dsl = _SUBSUMPTION_BASE + """\
 qualification Unrelated {
     category: licence
@@ -683,7 +673,7 @@ staff StaffU {
 
 
 def test_directly_held_qual_normal_checks_still_apply():
-    # Staff holds A1 directly but it is expired → normal expired violation
+    # Staff holds A1 directly but it is expired, normal expired violation
     dsl = _SUBSUMPTION_BASE + """\
 staff StaffExpired {
     role: certifying
@@ -711,3 +701,354 @@ staff StaffOK {
     a1_violations = [v for v in violations
                      if v.staff == "StaffOK" and v.qualification == "A1"]
     assert a1_violations == []
+
+
+
+# check_references - referential integrity tests
+# These tests exercise semantic constraints that are independent of temporal
+# validation.  The pattern is always: parse (syntax only) then check_references.
+
+_MINIMAL_QUAL = """\
+qualification TestQual {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: []
+}
+"""
+
+_TWO_QUALS = """\
+qualification A1 {
+    category: licence
+    validity: 60 months
+    renewal: training
+    prerequisites: []
+}
+qualification B1 {
+    category: licence
+    validity: 60 months
+    renewal: training
+    prerequisites: []
+}
+"""
+
+_THREE_QUALS = _TWO_QUALS + """\
+qualification C1 {
+    category: licence
+    validity: 60 months
+    renewal: training
+    prerequisites: []
+}
+"""
+
+
+def _check(dsl: str) -> None:
+    """Parse dsl then run check_references - helper to keep tests concise."""
+    check_references(parse_foresight(dsl))
+
+
+def test_check_references_passes_on_valid_model():
+    _check(_MINIMAL_QUAL)  # should not raise
+
+
+def test_holds_references_undefined_qualification():
+    dsl = _MINIMAL_QUAL + """
+staff Alice {
+    role: certifying
+    holds FakeQual {
+        issued: 2025-01-01
+    }
+}
+"""
+    with pytest.raises(ForesightError, match="holds qualification 'FakeQual'.*not defined"):
+        _check(dsl)
+
+
+def test_training_renews_undefined_qualification():
+    dsl = _MINIMAL_QUAL + """
+training SomeCourse {
+    renews: NoSuchQual
+}
+"""
+    with pytest.raises(ForesightError, match="renews qualification 'NoSuchQual'.*not defined"):
+        _check(dsl)
+
+
+def test_prerequisite_references_undefined_qualification():
+    dsl = """\
+qualification A {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: [NonExistent]
+}
+"""
+    with pytest.raises(ForesightError, match="prerequisite 'NonExistent'.*not defined"):
+        _check(dsl)
+
+
+def test_circular_prerequisites():
+    dsl = """\
+qualification A {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: [B]
+}
+qualification B {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: [A]
+}
+"""
+    with pytest.raises(ForesightError, match="circular prerequisite"):
+        _check(dsl)
+
+
+def test_task_requires_undefined_qualification():
+    dsl = _MINIMAL_QUAL + """
+task SomeTask {
+    type: base_maintenance
+    window {
+        start: 2025-06-01
+        end: 2025-06-15
+    }
+    requires {
+        qualification: GhostQual
+        min_staff: 1
+    }
+}
+"""
+    with pytest.raises(ForesightError, match="requires qualification 'GhostQual'.*not defined"):
+        _check(dsl)
+
+
+def test_scheduled_training_references_undefined_training():
+    dsl = _MINIMAL_QUAL + """
+staff Bob {
+    role: certifying
+    holds TestQual {
+        issued: 2025-01-01
+    }
+    training FakeCourse {
+        scheduled: 2025-07-01
+    }
+}
+"""
+    with pytest.raises(ForesightError, match="scheduled training 'FakeCourse'.*not defined"):
+        _check(dsl)
+
+
+def test_window_start_after_end_raises():
+    dsl = """\
+qualification Q {
+    category: licence
+    validity: 12 months
+    renewal: training
+    prerequisites: []
+}
+task BadWindow {
+    type: base_maintenance
+    window {
+        start: 2025-06-15
+        end: 2025-06-01
+    }
+}
+"""
+    with pytest.raises(ForesightError, match="window start.*after end"):
+        _check(dsl)
+
+
+def test_subsumption_undefined_subsuming_qual():
+    dsl = _TWO_QUALS + "subsumption {\n    GhostQual subsumes A1\n}\n"
+    with pytest.raises(ForesightError, match="'GhostQual'.*not a defined qualification"):
+        _check(dsl)
+
+
+def test_subsumption_undefined_subsumed_qual():
+    dsl = _TWO_QUALS + "subsumption {\n    B1 subsumes GhostTarget\n}\n"
+    with pytest.raises(ForesightError, match="'GhostTarget'.*not a defined qualification"):
+        _check(dsl)
+
+
+def test_circular_subsumption_two_nodes():
+    dsl = _TWO_QUALS + """\
+subsumption {
+    A1 subsumes B1
+    B1 subsumes A1
+}
+"""
+    with pytest.raises(ForesightError, match="circular subsumption chain"):
+        _check(dsl)
+
+
+def test_circular_subsumption_three_nodes():
+    dsl = _THREE_QUALS + """\
+subsumption {
+    A1 subsumes B1
+    B1 subsumes C1
+    C1 subsumes A1
+}
+"""
+    with pytest.raises(ForesightError, match="circular subsumption chain"):
+        _check(dsl)
+
+
+def test_self_subsumption():
+    dsl = _TWO_QUALS + "subsumption {\n    A1 subsumes A1\n}\n"
+    with pytest.raises(ForesightError, match="circular subsumption chain"):
+        _check(dsl)
+
+
+def test_validate_handles_circular_subsumption_gracefully():
+    # Call validate() directly (not check_references) with a circular subsumption
+    # model to exercise the cycle guard in _subsumption_closure._reach (line 179).
+    dsl = _TWO_QUALS + """\
+subsumption {
+    A1 subsumes B1
+    B1 subsumes A1
+}
+"""
+    model = parse_foresight(dsl)
+    violations = validate(model)
+    assert isinstance(violations, list)
+
+
+# rank_eligible
+
+
+from foresight.validator import rank_eligible, min_expiry
+from foresight.models import Qualification
+
+
+def _task(prefer):
+    return Task(
+        name="T",
+        window=TimeWindow(start=date(2026, 1, 1), end=date(2026, 1, 10)),
+        requires=Requirements(qualifications=["Q"], min_staff=1),
+        prefer=prefer,
+    )
+
+
+def test_rank_eligible_no_prefer_returns_unchanged():
+    staff = [Staff(name="B", role="r"), Staff(name="A", role="r")]
+    task = _task(None)
+    result = rank_eligible(staff, task, ForesightModel(), {})
+    assert [s.name for s in result] == ["B", "A"]
+
+
+def test_rank_eligible_unknown_prefer_returns_unchanged():
+    staff = [Staff(name="B", role="r"), Staff(name="A", role="r")]
+    result = rank_eligible(staff, _task("unknown_strategy"), ForesightModel(), {})
+    assert [s.name for s in result] == ["B", "A"]
+
+
+def test_rank_least_flexible_first():
+    alice = Staff(name="Alice", role="r")
+    bob = Staff(name="Bob", role="r")
+    # Alice eligible for 3 tasks, Bob for 1 - Bob is less flexible
+    counts = {"Alice": 3, "Bob": 1}
+    result = rank_eligible([alice, bob], _task("least_flexible_first"), ForesightModel(), counts)
+    assert [s.name for s in result] == ["Bob", "Alice"]
+
+
+def test_rank_most_experience_first():
+    alice = Staff(name="Alice", role="r", career_start=date(2015, 1, 1))
+    bob = Staff(name="Bob", role="r", career_start=date(2020, 1, 1))
+    result = rank_eligible([bob, alice], _task("most_experience_first"), ForesightModel(), {})
+    assert [s.name for s in result] == ["Alice", "Bob"]
+
+
+def test_rank_most_experience_first_none_career_start_sorts_last():
+    alice = Staff(name="Alice", role="r", career_start=date(2015, 1, 1))
+    unknown = Staff(name="Unknown", role="r", career_start=None)
+    result = rank_eligible([unknown, alice], _task("most_experience_first"), ForesightModel(), {})
+    assert result[0].name == "Alice"
+
+
+def test_rank_lowest_cost_first():
+    alice = Staff(name="Alice", role="r", day_rate=100.0)
+    bob = Staff(name="Bob", role="r", day_rate=200.0)
+    result = rank_eligible([bob, alice], _task("lowest_cost_first"), ForesightModel(), {})
+    assert [s.name for s in result] == ["Alice", "Bob"]
+
+
+def test_rank_lowest_cost_none_sorts_last():
+    alice = Staff(name="Alice", role="r", day_rate=50.0)
+    bob = Staff(name="Bob", role="r", day_rate=None)
+    result = rank_eligible([bob, alice], _task("lowest_cost_first"), ForesightModel(), {})
+    assert result[0].name == "Alice"
+
+
+def _expiry_model(alice_issued, bob_issued):
+    qual = Qualification(name="Q", category="licence", validity=Duration(12, "months"))
+    alice = Staff(name="Alice", role="r", holds=[HoldsRecord(qualification="Q", issued=alice_issued)])
+    bob = Staff(name="Bob", role="r", holds=[HoldsRecord(qualification="Q", issued=bob_issued)])
+    return ForesightModel(
+        qualifications={"Q": qual},
+        staff={"Alice": alice, "Bob": bob},
+    ), alice, bob
+
+
+def test_rank_latest_expiry_first():
+    # Alice issued 2025-06-01 → expires 2026-06-01; Bob issued 2025-01-01 → expires 2026-01-01
+    model, alice, bob = _expiry_model(date(2025, 6, 1), date(2025, 1, 1))
+    task = _task("latest_expiry_first")
+    result = rank_eligible([bob, alice], task, model, {})
+    assert [s.name for s in result] == ["Alice", "Bob"]
+
+
+def test_rank_earliest_expiry_first():
+    model, alice, bob = _expiry_model(date(2025, 6, 1), date(2025, 1, 1))
+    task = _task("earliest_expiry_first")
+    result = rank_eligible([alice, bob], task, model, {})
+    assert [s.name for s in result] == ["Bob", "Alice"]
+
+
+
+# FR14: bidirectional renewal type matching
+
+
+def test_training_qual_not_renewed_by_retest_course():
+    dsl = """\
+qualification ContQual {
+    category: type_rating
+    validity: 12 months
+    recency: 90 days
+    renewal: training
+    prerequisites: []
+}
+training RetestCourse {
+    renews: ContQual
+    type: retest
+}
+staff Dan {
+    role: certifying
+    holds ContQual {
+        issued: 2024-01-01
+        last_used: 2025-05-01
+    }
+    training RetestCourse {
+        scheduled: 2025-05-15
+    }
+}
+task TaskG {
+    type: base_maintenance
+    window {
+        start: 2025-06-01
+        end: 2025-06-10
+    }
+    requires {
+        qualification: ContQual
+        min_staff: 1
+    }
+}
+"""
+    # ContQual requires training-type renewal; RetestCourse is retest-type → rejected
+    # issued 2024-01-01 + 12 months = expired 2025-01-01, retest course not applied
+    model = parse_foresight(dsl)
+    violations = validate(model)
+    matches = _violations_for(violations, kind="expired", qualification="ContQual")
+    assert len(matches) == 1
+    assert matches[0].on_date == date(2025, 1, 1)

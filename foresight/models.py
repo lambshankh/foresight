@@ -3,6 +3,17 @@ from datetime import date
 from typing import Optional
 
 
+class ForesightError(Exception):
+    """Raised for both syntax errors and semantic errors in a Foresight model.
+
+    Syntax errors carry line/column; semantic errors do not.
+    """
+    def __init__(self, message, line=None, column=None):
+        self.line = line
+        self.column = column
+        super().__init__(message)
+
+
 @dataclass
 class Duration:
     value: int

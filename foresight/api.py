@@ -1,12 +1,12 @@
 from collections import Counter, defaultdict
 from dataclasses import asdict
-from datetime import date
 
 from fastapi import FastAPI, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from .models import ForesightError
 from .parser import parse_foresight
-from .validator import validate, effective_issued, add_duration
+from .validator import validate, check_references, rank_eligible
 
 app = FastAPI(title="Foresight")
 
@@ -27,38 +27,6 @@ def _serialise_violation(v):
     row["on_date"] = _date_str(row["on_date"])
     return row
 
-
-def _min_expiry(staff, task, model):
-    earliest = None
-    for qual_name in task.requires.qualifications:
-        qual = model.qualifications.get(qual_name)
-        if qual is None or qual.validity is None:
-            continue
-        issued = effective_issued(qual_name, staff, model, task.window.start)
-        if issued is None:
-            continue
-        expiry = add_duration(issued, qual.validity)
-        if earliest is None or expiry < earliest:
-            earliest = expiry
-    return earliest
-
-
-def _rank_eligible(eligible_staff, task, model, eligibility_counts):
-    prefer = task.prefer
-    if prefer is None:
-        return eligible_staff
-
-    if prefer == "least_flexible_first":
-        return sorted(eligible_staff, key=lambda s: eligibility_counts.get(s.name, 0))
-    if prefer == "most_experience_first":
-        return sorted(eligible_staff, key=lambda s: s.career_start or date.max)
-    if prefer == "lowest_cost_first":
-        return sorted(eligible_staff, key=lambda s: s.day_rate if s.day_rate is not None else float("inf"))
-    if prefer == "latest_expiry_first":
-        return sorted(eligible_staff, key=lambda s: _min_expiry(s, task, model) or date.min, reverse=True)
-    if prefer == "earliest_expiry_first":
-        return sorted(eligible_staff, key=lambda s: _min_expiry(s, task, model) or date.max)
-    return eligible_staff
 
 
 def _build_response(model, violations):
@@ -95,7 +63,7 @@ def _build_response(model, violations):
         task_violations = by_task.get(task.name, [])
         staff_violations = [v for v in task_violations if v.staff]
 
-        ranked = _rank_eligible(task_eligible_staff[task.name], task, model, eligibility_counts)
+        ranked = rank_eligible(task_eligible_staff[task.name], task, model, eligibility_counts)
 
         needed = task.requires.min_staff or 1
         is_covered = len(ranked) >= needed
@@ -156,6 +124,11 @@ async def validate_plan(file: UploadFile):
         model = parse_foresight(text)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Parse error: {e}")
+
+    try:
+        check_references(model)
+    except ForesightError as e:
+        raise HTTPException(status_code=422, detail=f"Semantic error: {e}")
 
     violations = validate(model)
     return _build_response(model, violations)
